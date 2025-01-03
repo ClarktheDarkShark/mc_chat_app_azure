@@ -8,10 +8,6 @@ from datetime import datetime, timedelta
 from datetime import time as dt_time
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
-
-# Remove direct import of openai
-# from utils.fetch_page_content import fetch_page_content  # Ensure this is synchronous
-
 from utils.fetch_page_content import fetch_page_content  # Ensure this is synchronous
 
 est = pytz.timezone('America/New_York')
@@ -53,7 +49,9 @@ class WebSearchCog:
         Use the provided OpenAI client to generate optimized search terms from user input.
         """
         prompt = (
-            f"Generate concise search terms for a Google search based on the user input. Return only the search terms, with no additional formatting or headings. Be as brief and relevant as possible. The current date, if relevant, is {current_date}. Prefer .mil domains when applicable. Do not use quotation marks."
+            f"Generate concise search terms for a Google search based on the user input. Return only the search terms, with no additional formatting or headings. "
+            f"Be as brief and relevant as possible. The current date, when asked for current information, is {current_date}. You are only retrieving 3 websites, so it is critical that the information produces quality result websites."
+            f"Prefer .mil domains when applicable. Do not use quotation marks.""
         )
 
         messages = [
@@ -90,8 +88,8 @@ class WebSearchCog:
         """Perform a web search using the Google Custom Search API."""
         # First, generate optimized search terms using the LLM
         optimized_query = self.generate_search_terms(query, history)
-        print(f"Query: {query}\n")
-        print(f"Optimized Query: {optimized_query}")
+        print(f"Query: {query}\n", flush=True)
+        print(f"Optimized Query: {optimized_query}", flush=True)
 
         if validators.url(optimized_query):
             content = fetch_page_content(optimized_query)
@@ -114,7 +112,7 @@ class WebSearchCog:
                     if not items:
                         query += f'This is what you provided last time and resulted in no search results. Try again, but be more general to allow a broader search:\n{optimized_query}'
                         optimized_query = self.generate_search_terms(query, history)
-                        print(f"Second Optimized Query: {optimized_query}")
+                        print(f"Second Optimized Query: {optimized_query}", flush=True)
                         params = {
                             "key": self.search_api_key,
                             "cx": self.search_engine_id,
@@ -151,13 +149,13 @@ class WebSearchCog:
         if not items:
             return "No search results found."
 
-        urls = [item.get('link') for item in items[:5] if item.get('link')]
+        urls = [item.get('link') for item in items[:3] if item.get('link')]
         if not urls:
             return "No valid URLs found in search results."
 
         contents = []
         for url in urls:
-            print(f"Fetching content from {url}")
+            print(f"Fetching content from {url}", flush=True)
             content = fetch_page_content(url)
             # print('og content', content)
             if content:

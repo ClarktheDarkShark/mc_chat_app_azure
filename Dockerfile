@@ -20,4 +20,6 @@ RUN pip install gunicorn gevent==21.12.0
 EXPOSE 3000
 
 # Run the app using Gunicorn with Gevent for async and increased timeout
-CMD ["gunicorn", "-w", "4", "-k", "gevent", "-b", "0.0.0.0:3000", "--timeout", "120", "app:app"]
+CMD ["gunicorn", "-w", "2","-k", "gevent","-b", "0.0.0.0:3000", "--timeout", "120","--max-requests", "1000", "--max-requests-jitter", "300", "app:app"]
+
+

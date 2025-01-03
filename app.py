@@ -103,10 +103,7 @@ def create_app():
     return app
 
 # Create the app instance globally for Gunicorn
-app = create_app()
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 3000))
-    app.run(host="0.0.0.0", port=port)  # Bind to all interfaces
-
-
+try:
+    app = create_app()
+except Exception as e:
+    print(f"Error starting app: {e}")

@@ -195,8 +195,9 @@ function ChatApp() {
 I am here to assist you with a variety of tasks. Here are some things you can ask me:
 
 - Summarize the latest news about the Marine Corps.
-- Explain how the intent function in your code provodes user query orchestration.
+- Explain how my code handles query orchestration.
 - Generate a briefing on amphibious operations.
+- Upload files to query, compare, summarize, or improve.
 - Create an image of Marines conducting an amphibious assault.
 
 Feel free to type your question below!`,
