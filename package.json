@@ -1,4 +1,11 @@
 {
+  "scripts": {
+    "start": "react-app-rewired start",
+    "build": "react-app-rewired build",
+    "test": "react-app-rewired test",
+    "eject": "react-scripts eject"
+  },
+  "homepage": "/static",
   "dependencies": {
     "@mui/icons-material": "^6.3.0",
     "@testing-library/jest-dom": "^5.17.0",
@@ -11,6 +18,7 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.0",
+    "socket.io-client": "^4.8.1",
     "uuid": "^11.0.3",
     "web-vitals": "^2.1.4"
   }

@@ -1,25 +1,48 @@
-# Use an official Python image as the base
+# Dockerfile
 FROM python:3.9-slim
+
+# Set environment variables for Python
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV ANYIO_BACKEND=asyncio
+ENV AZURE_BLOB_CONNECTION_STRING=""
+ENV KEYVAULT_NAME=MCChatAppKeyVault
 
 # Set the working directory
 WORKDIR /app
 
 # Install system dependencies (including Git and PostgreSQL dev packages)
-RUN apt-get update && apt-get install -y git libpq-dev gcc build-essential
+RUN apt-get update && apt-get install -y \
+    git \
+    libpq-dev \
+    gcc \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy the application files
-COPY . .
+# Copy only requirements.txt first for better caching
+COPY requirements.txt .
 
-# Install dependencies (if requirements.txt exists)
+# Install dependencies (including Gunicorn and Eventlet)
+RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Gunicorn and Gevent (explicit version)
-RUN pip install gunicorn gevent==21.12.0
+RUN pip uninstall -y trio trio-websocket || true
+
+
+# Copy the rest of the application files
+COPY . .
 
 # Expose the port your app will run on (e.g., 3000)
 EXPOSE 3000
 
-# Run the app using Gunicorn with Gevent for async and increased timeout
-CMD ["gunicorn", "-w", "2","-k", "gevent","-b", "0.0.0.0:3000", "--timeout", "120","--max-requests", "1000", "--max-requests-jitter", "300", "app:app"]
-
-
+# Run the app using Gunicorn with Eventlet for async and increased timeout
+CMD ["gunicorn", \
+     "--worker-class", "eventlet", \
+     "-w", "4", \
+     "-b", "0.0.0.0:3000", \
+     "--timeout", "120", \
+     "--max-requests", "1000", \
+     "--max-requests-jitter", "300", \
+     "--log-level", "info", \
+     "--access-logfile", "-", \
+     "app:application"]

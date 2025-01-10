@@ -1,58 +1,57 @@
 # cogs/chat.py
-from flask import Blueprint, request, jsonify, session, send_from_directory
+from flask import Blueprint, request, jsonify, send_from_directory
 import os
 import gc
 import json
 import uuid
+import openai
 from werkzeug.utils import secure_filename
 from db import db
+import traceback
 from models import Conversation, Message, UploadedFile
 from datetime import datetime
+import traceback
+# Import the updated process_uploaded_file with Azure support
 from utils.file_utils import process_uploaded_file
+from flask_socketio import rooms
+
 from cogs.orchestration_analysis import OrchestrationAnalysisCog
 from utils.response_generation import generate_image, generate_chat_response
 from .web_search import WebSearchCog
 from .code_files import CodeFilesCog
 from cogs.code_structure_visualizer import CodeStructureVisualizerCog  # New import
+
+# Azure
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
+try:
+    from azure.storage.blob import BlobServiceClient
+except ImportError:
+    BlobServiceClient = None
 
 WORD_LIMIT = 50000
 MAX_MESSAGES = 20  # <--- Limit the number of messages in memory
 
+# **New Imports for SocketIO**
+from flask_socketio import SocketIO, emit, join_room  # <-- Added
+
+
 class ChatCog:
-    def __init__(self, app_instance, flask_app):
+    def __init__(self, app_instance, flask_app, socketio):  # <-- Modified to accept socketio
         self.bp = Blueprint("chat_blueprint", __name__)
+        self.socketio = socketio  # <-- Store socketio instance
 
-        # **Initialize Azure Key Vault Client**
-        key_vault_name = os.getenv("KEYVAULT_NAME")  # Ensure this env var is set in ACI
-        key_vault_uri = f"https://{key_vault_name}.vault.azure.net"
-
-        try:
-            credential = DefaultAzureCredential()
-            secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
-            
-            # **Fetch secrets from Key Vault**
-            openai_key = secret_client.get_secret("OPENAI-KEY").value
-            google_key = secret_client.get_secret("GOOGLE-API-KEY").value
-            
-            # **Set the fetched secrets to environment variables (optional)**
-            os.environ["OPENAI_KEY"] = openai_key
-            os.environ["GOOGLE_API_KEY"] = google_key
-        except Exception as e:
-            print(f"Failed to fetch secrets from Key Vault: {e}")
-            raise  # Optional: Prevent app from starting without secrets
-        
         # Initialize OpenAI client
-        import openai
+        openai_key = os.getenv("OPENAI_KEY")
+        google_key = os.getenv("GOOGLE_API_KEY")
         openai.api_key = openai_key  # Use the fetched secret directly
         self.client = openai
-        
+
         # Initialize other cogs
         self.web_search_cog = WebSearchCog(openai_client=self.client)
         self.code_files_cog = CodeFilesCog()
         self.orchestration_analysis_cog = OrchestrationAnalysisCog(self.client)
-        
+
         self.google_key = google_key
         self.app_instance = app_instance
 
@@ -61,47 +60,177 @@ class ChatCog:
         os.makedirs(self.upload_folder, exist_ok=True)
         print(f"Uploads directory set at: {self.upload_folder}")
 
+        # Add Socket.IO event handlers
+        self.add_socketio_events()
+
         self.code_structure_visualizer_cog = CodeStructureVisualizerCog(self.upload_folder)
 
+        # ------------------------------------------------------------
+        # Attempt to initialize Azure Storage (optional)
+        # If no connection string is found, we keep local storage only
+        # ------------------------------------------------------------
+        self.use_azure = False
+        azure_conn_str = None
+        try:
+            azure_conn_str = os.getenv("AZURE_BLOB_CONNECTION_STRING")  # Example env var
+        except Exception as e:
+            print(f'No AZURE_BLOB_CONNECTION_STRING in env', flush=True)
+
+        print(f'azure_conn_str: {azure_conn_str}', flush=True)
+        if BlobServiceClient and azure_conn_str:
+            try:
+                self.blob_service_client = BlobServiceClient.from_connection_string(azure_conn_str)
+                self.use_azure = False
+                print("Azure Blob Storage is configured. Files will be uploaded to Azure.")
+            except Exception as ex:
+                print(f"Failed to initialize BlobServiceClient. Using local storage. Error: {ex}")
+                self.blob_service_client = False
+        else:
+            self.blob_service_client = False
+            print("Azure Blob Storage is NOT configured. Using local storage by default.")
+
+        self.azure_container_name = os.getenv("AZURE_CONTAINER_NAME", "my-container-name")
+
+        print(f'Adding routes...', flush=True)
         self.add_routes()
+        print("Routes added.", flush=True)
+
+    def add_socketio_events(self):
+        @self.socketio.on('connect')
+        def handle_connect():
+            try:
+                # Retrieve session_id from WebSocket query parameters
+                session_id = request.args.get('session_id')
+                print(f'session_id connecting: {session_id}', flush=True)
+
+                if not session_id:
+                    session_id = str(uuid.uuid4())  # Generate if not provided
+                    print(f'Generated new session_id: {session_id}', flush=True)
+
+                join_room(session_id)  # Join WebSocket room with the session_id
+                emit('connected', {'session_id': session_id})  # Emit back to client
+                print(f"Client connected and joined room: {session_id}", flush=True)
+
+
+            except Exception as e:
+                print(f"Error in connect handler: {e}", flush=True)
+                traceback.print_exc()
+
+        @self.socketio.on('verify_room')
+        def handle_verify_room(data):
+            room = data['room']
+            if room in rooms():
+                print(f"Client is in room: {room}", flush=True)
+            else:
+                print(f"Client is NOT in room: {room}", flush=True)
+
+        @self.socketio.on('disconnect')
+        def handle_disconnect():
+            print(f'Client disconnected: {request.sid}', flush=True)
+
+        @self.socketio.on('orchestrate')
+        def handle_orchestration(data):
+            session_id = data.get('room')  # Explicitly get session_id from payload
+            action = data.get('action')
+            if session_id and action:
+                print(f'Orchestration event received: {action}', flush=True)
+                # Example: Emit a status update for the received action
+                status_message = f'Processing action: {action}'
+                self.socketio.emit('status_update', {'message': status_message}, room=session_id)
+                # Further handling based on action...
+            else:
+                print('Orchestration event missing session_id or action.', flush=True)
 
     def add_routes(self):
         @self.bp.route("/chat", methods=["POST"])
         def chat():
+            print(flush=True)
             try:
-                # Ensure session has a unique session_id
-                if 'session_id' not in session:
-                    session['session_id'] = str(uuid.uuid4())
-                session_id = session['session_id']
-                
+                # Check the Content-Type of the request
+                if request.content_type.startswith('multipart/form-data'):
+                    # Handle file uploads
+                    message = request.form.get("message", "")
+                    model = request.form.get("model", "gpt-4o-mini")
+                    temperature = float(request.form.get("temperature", 0.7))
+                    file = request.files.get("file")
+
+                    if not file and not message:
+                        raise ValueError("No message or file provided")
+
+                    session_id = request.form.get("room")
+                    if not session_id:
+                        session_id = str(uuid.uuid4())  # Generate a new session ID if missing
+                        print(f"Generated new session_id for /chat: {session_id}", flush=True)
+
+                    print(f"Handling multipart/form-data request with session_id: {session_id}", flush=True)
+
+                elif request.is_json:
+                    # Handle JSON requests
+                    data = request.get_json()
+                    if not data:
+                        raise ValueError("Invalid JSON payload")
+
+                    session_id = data.get("room")
+                    message = data.get("message", "")
+                    model = data.get("model", "gpt-4o-mini")
+                    temperature = float(data.get("temperature", 0.7))
+                    file = None  # No file in JSON requests
+
+                    if not session_id:
+                        session_id = str(uuid.uuid4())  # Generate a new session ID if missing
+                        print(f"Generated new session_id for /chat: {session_id}", flush=True)
+
+                    print(f"Handling application/json request with session_id: {session_id}", flush=True)
+
+                else:
+                    raise ValueError("Unsupported Content-Type")
+
+                # Log session ID
+                print(f"Session ID used for /chat: {session_id}", flush=True)
+
+
                 # Retrieve system prompt
                 system_prompt = self.get_system_prompt()
-                print(f"System Prompt: {system_prompt}", flush=True)
+                # print(f"System Prompt: {system_prompt}", flush=True)
 
                 # Retrieve other parameters
                 message, model, temperature, file = self.get_request_parameters()
-                print(f"Model: {model}, Temperature: {temperature}")
+                # print(f"Model: {model}, Temperature: {temperature}", flush=True)
                 print(f"User Message: {message}", flush=True)
 
-                # Handle file upload if present
+                # ---------------------------------------------------------------
+                # Use updated process_uploaded_file that conditionally uses Azure
+                # ---------------------------------------------------------------
+
                 file_content, file_url, file_type, uploaded_file = process_uploaded_file(
                     file=file,
-                    upload_folder=self.upload_folder,
+                    upload_folder=self.upload_folder,    # local fallback folder
                     session_id=session_id,
-                    db_session=db
+                    db_session=db,
+                    # Toggle Azure settings
+                    use_azure=self.use_azure,            # only True if we found a conn_str
+                    blob_service_client=self.blob_service_client,
+                    container_name=self.azure_container_name
                 )
 
+                print('File upload portion cleared.', flush=True)
                 if not message and not file_url:
                     return jsonify({"error": "No message or file provided"}), 400
 
                 # Manage conversation
+                print('Getting conversatoin ID.', flush=True)
                 conversation_id, conversation = self.manage_conversation(session_id)
+                if not conversation:
+                    return jsonify({"error": "Conversation not found or unauthorized"}), 404
+
                 # Get conversation history and truncate if needed
+                print('Getting conversation history.', flush=True)
                 conversation_history = self.get_conversation_history(conversation_id)
                 if len(conversation_history) > MAX_MESSAGES:
                     conversation_history = conversation_history[-MAX_MESSAGES:]
 
                 # Analyze user orchestration
+                print('Sending for orchestration.', flush=True)
                 orchestration = self.orchestration_analysis_cog.analyze_user_orchestration(
                     user_message=message,
                     conversation_history=conversation_history,
@@ -109,66 +238,184 @@ class ChatCog:
                 )
 
                 if not message:
-                    message = 'User is uploading a file. Respond in acknowledgement that a file was uploaded.'
-                
-                print(f"Orchestration: {orchestration}", flush=True)
+                    message = f'User is uploading a file. Respond in acknowledgement that a file was uploaded. Here is the file name: {uploaded_file.original_filename}'
+
+                # print(f"Orchestration: {orchestration}", flush=True)
+
+                # Determine status message based on orchestration
+                if orchestration.get("internet_search"):
+                    status_message = "Searching the internet..."
+                elif orchestration.get("image_generation"):
+                    status_message = "Creating the image..."
+                elif orchestration.get("code_intent"):
+                    status_message = "Processing your code request..."
+                elif orchestration.get("file_orchestration"):
+                    status_message = "Analyzing the uploaded file..."
+                else:
+                    status_message = "Assistant is thinking..."
+
+                # Emit status update via SocketIO
+                print(f'status_message: {status_message}', flush=True)
+                print(f'Emitting with session id: {session_id}', flush=True)
+                self.socketio.emit('status_update', {'message': status_message}, room=session_id)
 
                 # Handle orchestration-specific actions
-                # Check if image generation is requested and handle it immediately
                 if orchestration.get("image_generation", False):
-                    return self.handle_image_generation(orchestration, message, conversation_history, conversation_id)
-                
-                # Similarly, handle code structure visualization if requested
-                if orchestration.get("code_structure_orchestration", False):
-                    return self.handle_code_structure_visualization(orchestration, message, conversation_history, conversation_id)
-                
-                # Handle other orchestrations
-                supplemental_information, assistant_reply = self.handle_orchestration(orchestration, session_id)
+                    response = self.handle_image_generation(orchestration, message, conversation_history, conversation_id)
+                    print(f'response: {response}', flush=True)
+                    # Emit task completion
+                    self.socketio.emit('task_complete', {'answer': response['assistant_reply']}, room=session_id)
+                    return response
+                elif orchestration.get("code_structure_orchestration", False):
+                    response = self.handle_code_structure_visualization(orchestration, message, conversation_history, conversation_id)
+                    # Emit task completion
+                    self.socketio.emit('task_complete', {'answer': response['assistant_reply']}, room=session_id)
+                    return response
+                else:
+                    # Handle other orchestrations
+                    supplemental_information, assistant_reply = self.handle_orchestration(orchestration, session_id, conversation_id)
 
-                # Prepare messages for OpenAI API
-                messages = self.prepare_messages(system_prompt, conversation_history, supplemental_information, message)
+                    # Prepare messages for OpenAI API
+                    messages = self.prepare_messages(system_prompt, conversation_history, supplemental_information, message)
 
-                # Trim conversation if necessary (token-based)
-                messages = self.trim_conversation(messages, WORD_LIMIT)
+                    # Trim conversation if necessary (token-based)
+                    messages = self.trim_conversation(messages, WORD_LIMIT)
 
-                # Generate chat response
-                assistant_reply = generate_chat_response(self.client, messages, model, temperature)
-                print(f"Assistant Reply: {assistant_reply}")
+                    # Generate chat response
+                    assistant_reply = generate_chat_response(self.client, messages, model, temperature)
+                    # print(f"Assistant Reply: {assistant_reply}", flush=True)
 
-                # Save messages to the database
-                self.save_messages(conversation_id, "user", message)
-                self.save_messages(conversation_id, "assistant", assistant_reply)
+                    # Save messages to the database
+                    self.save_messages(conversation_id, "user", message)
+                    self.save_messages(conversation_id, "assistant", assistant_reply)
 
-                del messages
-                gc.collect()
+                    # Emit task completion via SocketIO
+                    self.socketio.emit('task_complete', {'answer': assistant_reply}, room=session_id)
 
-                return jsonify({
-                    "user_message": message,
-                    "assistant_reply": assistant_reply,
-                    "conversation_history": conversation_history,  # truncated in memory above
-                    "orchestration": orchestration,
-                    "fileUrl": uploaded_file.file_url if uploaded_file else None,
-                    "fileName": uploaded_file.original_filename if uploaded_file else None,
-                    "fileType": uploaded_file.file_type if uploaded_file else None,
-                    "fileId": uploaded_file.id if uploaded_file else None
-                })
+                    del messages
+                    gc.collect()
+
+                    return jsonify({
+                        "user_message": message,
+                        "assistant_reply": assistant_reply,
+                        "conversation_history": conversation_history,  # truncated in memory above
+                        "orchestration": orchestration,
+                        "fileUrl": uploaded_file.file_url if uploaded_file else None,
+                        "fileName": uploaded_file.original_filename if uploaded_file else None,
+                        "fileType": uploaded_file.file_type if uploaded_file else None,
+                        "fileId": uploaded_file.id if uploaded_file else None
+                    }), 200
 
             except Exception as e:
-                print(f"Error in /chat route: {e}")
+                print(f"Error in /chat route: {e}", flush=True)
+                traceback.print_exc()
+                db.session.rollback()  # Add this line to rollback the session
                 return jsonify({"error": str(e)}), 500
 
-        # **New Route to Serve Uploaded Images**
+        # **New Route to Serve Uploaded Images (or any file) Locally**
         @self.bp.route('/uploads/<filename>')
         def uploaded_file(filename):
             """
-            Serve uploaded files from the uploads directory.
+            Serve uploaded files from the uploads directory (local).
+            If using Azure, you'd serve via a blob URL. This is for local fallback.
             """
             try:
                 filename = secure_filename(filename)
                 return send_from_directory(self.upload_folder, filename)
             except Exception as e:
-                print(f"Error serving file {filename}: {e}")
+                print(f"Error serving file {filename}: {e}", flush=True)
                 return jsonify({"error": "File not found."}), 404
+
+    
+        # ############################################################################
+        # # NEW Conversation routes go below
+        # ############################################################################
+        @self.bp.route("/conversations/<int:session_id>", methods=["GET"])
+        def get_conversations():
+            try:
+                session_id = request.args.get(session_id)  # Obtain from request or context
+                print(f"Fetching conversation for session_id: {session_id}", flush=True)
+                
+                if not session_id:
+                    return jsonify({"error": "Session ID is required"}), 400
+
+                conversation = Conversation.query.filter_by(session_id=session_id).first()
+                
+                if not conversation:
+                    print(f"No conversation found for session_id: {session_id}", flush=True)
+                    return jsonify({"conversations": []}), 200
+                
+                data = {
+                    "id": conversation.id,
+                    "session_id": conversation.session_id,
+                    "title": conversation.title,
+                    "timestamp": conversation.timestamp.isoformat() if conversation.timestamp else None,
+                }
+                    
+                return jsonify({"conversation": data}), 200
+
+            except Exception as e:
+                print(f"Error retrieving conversation: {e}", flush=True)
+                traceback.print_exc()
+                return jsonify({"error": "Failed to retrieve conversation"}), 500
+
+
+        # @self.bp.route("/conversations/<int:conversation_id>", methods=["GET"])
+        # def get_conversation_by_id(conversation_id):
+        #     """
+        #     Returns the specific conversation’s message history.
+        #     """
+        #     try:
+
+                # conversation = Conversation.query.get(conversation_id)
+        #         if not conversation:
+        #             return jsonify({"error": "Conversation not found"}), 404
+
+        #         messages = Message.query.filter_by(conversation_id=conversation_id).order_by(Message.timestamp).all()
+        #         conversation_history = []
+        #         for msg in messages:
+        #             conversation_history.append({
+        #                 "id": msg.id,
+        #                 "role": msg.role,
+        #                 "content": msg.content,
+        #                 "timestamp": msg.timestamp.isoformat() if msg.timestamp else None
+        #             })
+
+        #         return jsonify({"conversation_history": conversation_history}), 200
+        #     except Exception as e:
+        #         print(f"Error retrieving conversation: {e}", flush=True)
+        #         return jsonify({"error": str(e)}), 500
+
+
+        @self.bp.route("/conversations/new", methods=["POST"])
+        def create_new_conversation():
+            """
+            Creates a new conversation and returns its ID and other info.
+            """
+            try:
+                data = request.get_json()
+                title = data.get("title", "New Conversation")
+
+                # You could also link it to a user or session_id. For now, we just randomize:
+                new_conversation = Conversation(
+                    session_id=str(uuid.uuid4()),
+                    title=title,
+                )
+                db.session.add(new_conversation)
+                db.session.commit()
+
+                return jsonify({
+                    "id": new_conversation.id,
+                    "session_id": new_conversation.session_id,
+                    "title": new_conversation.title
+                }), 200
+            except Exception as e:
+                print(f"Error creating conversation: {e}", flush=True)
+                db.session.rollback()
+                return jsonify({"error": str(e)}), 500
+
+
+    # Additional Helper Methods
 
     def get_system_prompt(self):
         if request.content_type.startswith('multipart/form-data'):
@@ -214,22 +461,35 @@ class ChatCog:
             file = None
         return message, model, temperature, file
 
+    
     def manage_conversation(self, session_id):
-        if 'current_conversation_id' not in session:
-            title = "New Conversation"
-            new_convo = Conversation(
-                session_id=session_id,
-                title=title
-            )
-            db.session.add(new_convo)
-            db.session.commit()
-            session['current_conversation_id'] = new_convo.id
-            return new_convo.id, new_convo
-        conversation_id = session.get('current_conversation_id')
-        conversation = Conversation.query.get(conversation_id)
-        if not conversation or conversation.session_id != session_id:
-            raise Exception("Conversation not found or unauthorized")
-        return conversation_id, conversation
+        try:
+            # Fetch or create a conversation based on session_id
+            print(f'session_id before calling database query: {session_id}', flush=True)
+            conversation = Conversation.query.filter_by(session_id=session_id).first()
+            print(f'conversation: {conversation}', flush=True)
+            if not conversation:
+                print('Not conversation...', flush=True)
+                # Create a new conversation
+                conversation = Conversation(session_id=session_id, title="New Conversation")
+                print(f'conversation: {conversation}', flush=True)
+                try:
+                    print('Add conversation...', flush=True)
+                    db.session.add(conversation)
+                    print('Commit conversation...', flush=True)
+                    db.session.commit()
+                    print('Refresh conversation...', flush=True)
+                    db.session.refresh(conversation)  # Ensure it's attached after commit
+                except Exception as e:
+                    db.session.rollback()
+                    print(f"Error managing conversation: {e}", flush=True)
+                    return None, None
+            return conversation.id, conversation
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error in manage_conversation: {e}", flush=True)
+            traceback.print_exc()
+            return None, None
 
     def get_conversation_history(self, conversation_id):
         """
@@ -240,7 +500,7 @@ class ChatCog:
         history = [{"role": msg.role, "content": msg.content} for msg in messages_db]
         return history
 
-    def handle_orchestration(self, orchestration, session_id=None):
+    def handle_orchestration(self, orchestration, session_id=None, conversation_id=None):
         supplemental_information = {}
         assistant_reply = ""
         
@@ -259,7 +519,7 @@ class ChatCog:
                 assistant_reply = "No code files found to provide."
         elif orchestration.get("internet_search", False):
             query = request.json.get("message", "")
-            search_content = self.web_search_cog.web_search(query, self.get_conversation_history(session.get('current_conversation_id')))
+            search_content = self.web_search_cog.web_search(query, self.get_conversation_history(conversation_id))
             sys_search_content = (
                 'Do not say "I am unable to browse the internet," because you have information directly retrieved from the internet. '
                 'Give a confident answer based on this. Only use the most relevant and accurate information that matches the User Query. '
@@ -280,8 +540,7 @@ class ChatCog:
             else:
                 assistant_reply = "Please provide a valid range for the random number."
         return supplemental_information, assistant_reply
-
-
+        
     def handle_file_orchestration(self, orchestration, session_id):
         """
         Handle file orchestration based on the orchestration instructions.
@@ -394,12 +653,18 @@ class ChatCog:
                         try:
                             print(f"File exists. Processing file: {uploaded_file.original_filename}", flush=True)
                             # Process the uploaded file (adjust parameters as needed)
+                            # read=True => means read from local path
                             file_content = process_uploaded_file(
                                 file=None,
                                 upload_folder=self.upload_folder,
                                 session_id=uploaded_file.session_id,
+                                db_session=db,
                                 read=True,
-                                path=file_path
+                                path=file_path,
+                                # Still pass Azure info, but read=True means we won't reupload
+                                use_azure=self.use_azure,
+                                blob_service_client=self.blob_service_client,
+                                container_name=self.azure_container_name
                             )
                             print(f"Successfully processed file: {uploaded_file.original_filename}", flush=True)
                             file_contents.append((uploaded_file.original_filename, file_content))
@@ -461,16 +726,10 @@ class ChatCog:
 
             print("handle_file_orchestration completed successfully.", flush=True)
             return supplemental_information, assistant_reply
-
         except Exception as e:
-            # Catch any unexpected exceptions and provide debug information
-            print(f"Unexpected error in handle_file_orchestration: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            # Optionally, you can return a default error response
-            assistant_reply = "An unexpected error occurred while processing your file request."
+            print('Error:', e)
             return supplemental_information, assistant_reply
-
+            
 
     def handle_image_generation(self, orchestration, user_message, conversation_history, conversation_id):
         """

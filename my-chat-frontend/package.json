@@ -5,18 +5,22 @@
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.0",
-    "@mui/icons-material": "^6.3.0",
-    "@mui/material": "^6.3.0",
+    "@mui/icons-material": "^6.3.1",
+    "@mui/material": "^6.3.1",
     "bootstrap": "^5.3.3",
     "cra-template": "1.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-scripts": "^5.0.1"
+    "react-markdown": "^9.0.1",
+    "react-scripts": "^5.0.1",
+    "socket.io-client": "^4.8.1"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "INLINE_RUNTIME_CHUNK=false react-scripts build",
-    "postinstall": "echo 'Frontend built' && npm run build"
+    "start": "react-app-rewired start",
+    "build": "react-app-rewired build",
+    "postinstall": "echo 'Frontend built' && npm run build",
+    "test": "react-app-rewired test",
+    "eject": "react-scripts eject"
   },
   "eslintConfig": {
     "extends": [
@@ -37,6 +41,7 @@
     ]
   },
   "devDependencies": {
-    "@babel/plugin-proposal-private-property-in-object": "^7.21.11"
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
+    "react-app-rewired": "^2.2.1"
   }
 }

@@ -51,7 +51,7 @@ class WebSearchCog:
         prompt = (
             f"Generate concise search terms for a Google search based on the user input. Return only the search terms, with no additional formatting or headings. "
             f"Be as brief and relevant as possible. The current date, when asked for current information, is {current_date}. You are only retrieving 3 websites, so it is critical that the information produces quality result websites."
-            f"Prefer .mil domains when applicable. Do not use quotation marks.""
+            f"Prefer .mil domains when applicable. Do not use quotation marks."
         )
 
         messages = [
@@ -61,10 +61,10 @@ class WebSearchCog:
                 ]
 
         try:
-            print()
-            print('messages', messages)
-            print('user_input', user_input)
-            print()
+            # print()
+            # print('messages', messages)
+            # print('user_input', user_input)
+            # print()
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",  # Specify the desired model
                 messages=messages,
@@ -110,7 +110,7 @@ class WebSearchCog:
                     search_results = response.json()
                     items = search_results.get('items', [])
                     if not items:
-                        query += f'This is what you provided last time and resulted in no search results. Try again, but be more general to allow a broader search:\n{optimized_query}'
+                        query += f'This is what you provided last time and resulted in no search results:\n{optimized_query}.\n\n Try again, but be more general to allow a broader search. Do not include "site" as a search term.'
                         optimized_query = self.generate_search_terms(query, history)
                         print(f"Second Optimized Query: {optimized_query}", flush=True)
                         params = {
@@ -125,6 +125,7 @@ class WebSearchCog:
                                 print(f"Error fetching search results: {response.status_code}")
                                 print(f"Error details: {error_content}")
                                 return "An error occurred while performing the web search."
+                            search_results = response.json()
                         except Exception as e:
                             print(f"Exception during web search: {e}")
                             return "An error occurred while performing the web search."
@@ -139,6 +140,7 @@ class WebSearchCog:
             except Exception as e:
                 print(f"Exception during web search: {e}")
                 return "An error occurred while performing the web search."
+
 
     def fetch_search_content(self, search_results):
         """Fetch content from search results."""
@@ -157,11 +159,9 @@ class WebSearchCog:
         for url in urls:
             print(f"Fetching content from {url}", flush=True)
             content = fetch_page_content(url)
-            # print('og content', content)
             if content:
-                content = f"From {url}:" + content
-            # print('new content', content)
-            if content:
+                # Highlight URL clearly for LLM
+                content = f"### Source URL:\n{url}\n\n**Content:**\n{content}"
                 contents.append(content[:3000])  # Limit content length
 
         return '\n'.join(contents) if contents else "No detailed information found."

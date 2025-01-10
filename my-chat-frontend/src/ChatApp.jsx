@@ -28,12 +28,11 @@ import CloseIcon from '@mui/icons-material/Close';
 import SendIcon from '@mui/icons-material/Send';
 import ClearIcon from '@mui/icons-material/Clear';
 import MenuIcon from '@mui/icons-material/Menu';
-import UploadFileIcon from '@mui/icons-material/UploadFile'; // **ADDED**
-
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
-// Removed react-window for debugging purposes
-// import { FixedSizeList as ListWindow } from 'react-window';
 
+// ErrorBoundary Component to Catch Rendering Errors
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -60,6 +59,7 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// MUI Theme Configuration
 const theme = createTheme({
   palette: {
     primary: { main: '#AF002A' },
@@ -75,119 +75,161 @@ const theme = createTheme({
   },
 });
 
-// Memoized Message Component to prevent unnecessary re-renders
-const ChatMessage = memo(({ msg }) => {
-  console.log(`Rendering message ${msg.id}:`, msg.content);
+// Memoized ChatMessage Component with loadingText prop
+const ChatMessage = memo(
+  ({ msg, loadingText }) => {
+    console.log(`Rendering message ${msg.id}:`, msg.content);
 
-  const isImage =
-    msg.role === "assistant" && msg.content.startsWith("![Generated Image](");
-  const isAssistant = msg.role === "assistant";
-  const isFile = msg.role === "user" && msg.file; // **ADDED**
+    const isImage =
+      msg.role === "assistant" && msg.content.startsWith("![Generated Image](");
+    const isAssistant = msg.role === "assistant";
+    const isFile = msg.role === "user" && msg.file;
 
-  let contentToRender;
+    let contentToRender;
 
-  if (msg.loading) {
-    contentToRender = (
-      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-        <CircularProgress size={20} color="secondary" />
-        <Typography variant="body2" sx={{ ml: 1 }}>
-          {msg.content} {/* Display dynamic loading text */}
+    if (msg.loading) {
+      contentToRender = (
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          <CircularProgress size={20} color="secondary" />
+          <Typography variant="body2" sx={{ ml: 1 }}>
+            {msg.content} {/* Directly display the updated content */}
+          </Typography>
+        </Box>
+      );
+    } else if (isImage) {
+      const match = msg.content.match(/^!\[Generated Image\]\((.+)\)$/);
+      const imageUrl = match ? match[1] : null;
+
+      if (imageUrl) {
+        contentToRender = (
+          <Box sx={{ maxWidth: '70%', borderRadius: '8px', overflow: 'hidden' }}>
+            <img
+              src={imageUrl}
+              alt="Generated"
+              style={{ width: '100%', height: 'auto', display: 'block' }}
+            />
+          </Box>
+        );
+      } else {
+        contentToRender = (
+          <Typography variant="body1" color="error">
+            Invalid image URL.
+          </Typography>
+        );
+      }
+    } else if (isFile) {
+      const fileUrl = msg.fileUrl;
+      const fileName = msg.fileName;
+      const fileType = msg.fileType;
+
+      if (fileType.startsWith("image/")) {
+        contentToRender = (
+          <Box sx={{ maxWidth: '70%', borderRadius: '8px', overflow: 'hidden' }}>
+            <img
+              src={fileUrl}
+              alt={fileName}
+              style={{ width: '100%', height: 'auto', display: 'block' }}
+            />
+          </Box>
+        );
+      } else if (fileType === "application/pdf") {
+        contentToRender = (
+          <Box sx={{ maxWidth: '70%' }}>
+            <a
+              href={fileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#FFD700', textDecoration: 'none' }}
+            >
+              {fileName} (PDF)
+            </a>
+          </Box>
+        );
+      } else {
+        contentToRender = (
+          <Typography variant="body1" color="secondary">
+            {fileName} ({fileType})
+          </Typography>
+        );
+      }
+    } else if (isAssistant) {
+      contentToRender = (
+        <ReactMarkdown>
+          {msg.content || "**(No content available)**"}
+        </ReactMarkdown>
+      );
+    } else {
+      contentToRender = (
+        <Typography variant="body1">
+          {msg.content || "No response available."}
         </Typography>
+      );
+    }
+
+    return (
+      <Box
+        sx={{
+          backgroundColor:
+            msg.role === "user"
+              ? 'primary.main'
+              : msg.loading
+              ? 'grey.500'
+              : 'grey.700',
+          color: 'white',
+          borderRadius: 2,
+          p: isImage || isFile ? 0 : 1,
+          maxWidth: '80%',
+          ml: msg.role === "user" ? 'auto' : 0,
+          mb: 1,
+        }}
+      >
+        {contentToRender}
       </Box>
     );
-  } else if (isImage) {
-    // Use regex to safely parse the image URL
-    const match = msg.content.match(/^!\[Generated Image\]\((.+)\)$/);
-    const imageUrl = match ? match[1] : null;
-
-    if (imageUrl) {
-      contentToRender = (
-        <Box sx={{ maxWidth: '70%', borderRadius: '8px', overflow: 'hidden' }}>
-          <img
-            src={imageUrl}
-            alt="Generated"
-            style={{ width: '100%', height: 'auto', display: 'block' }}
-          />
-        </Box>
-      );
-    } else {
-      contentToRender = (
-        <Typography variant="body1" color="error">
-          Invalid image URL.
-        </Typography>
-      );
-    }
-  } else if (isFile) { // **ADDED**
-    // Render the uploaded file (assuming it's a PDF or image for simplicity)
-    const fileUrl = msg.fileUrl; // URL to access the uploaded file
-    const fileName = msg.fileName;
-    const fileType = msg.fileType;
-
-    if (fileType.startsWith("image/")) {
-      contentToRender = (
-        <Box sx={{ maxWidth: '70%', borderRadius: '8px', overflow: 'hidden' }}>
-          <img
-            src={fileUrl}
-            alt={fileName}
-            style={{ width: '100%', height: 'auto', display: 'block' }}
-          />
-        </Box>
-      );
-    } else if (fileType === "application/pdf") {
-      contentToRender = (
-        <Box sx={{ maxWidth: '70%' }}>
-          <a href={fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#FFD700', textDecoration: 'none' }}>
-            {fileName} (PDF)
-          </a>
-        </Box>
-      );
-    } else {
-      contentToRender = (
-        <Typography variant="body1" color="secondary">
-          {fileName} ({fileType})
-        </Typography>
-      );
-    }
-  } else if (isAssistant) {
-    contentToRender = (
-      <ReactMarkdown>
-        {msg.content || "**(No content available)**"}
-      </ReactMarkdown>
-    );
-  } else {
-    contentToRender = (
-      <Typography variant="body1">
-        {msg.content || "No response available."}
-      </Typography>
+  },
+  (prevProps, nextProps) => {
+    // Custom comparison function
+    return (
+      prevProps.msg.id === nextProps.msg.id &&
+      prevProps.msg.content === nextProps.msg.content &&
+      prevProps.loadingText === nextProps.loadingText
     );
   }
+);
 
-  return (
-    <Box
-      sx={{
-        backgroundColor: isImage || isFile
-          ? 'transparent'
-          : (msg.role === "user" ? 'primary.main' : (msg.loading ? 'grey.500' : 'grey.700')),
-        color: 'white',
-        borderRadius: 2,
-        p: isImage || isFile ? 0 : 1, // **CHANGED**
-        maxWidth: '80%',
-        ml: msg.role === "user" ? 'auto' : 0,
-        mb: 1,
-      }}
-    >
-      {contentToRender}
-    </Box>
-  );
-});
 
+// Main ChatApp Component
 function ChatApp() {
+  // Utility function to generate UUID
+  const generateUUID = () => {
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+      const r = (Math.random() * 16) | 0,
+        v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  };
+  // State Variables
+  // Theme and Media Query for responsive Typography
+  const muiTheme = useTheme();
+  const isMobile = useMediaQuery(muiTheme.breakpoints.down("md"));
   const [message, setMessage] = useState("");
   const [model, setModel] = useState("gpt-4o-mini");
   const [temperature, setTemperature] = useState(0.7);
   const [systemPrompt, setSystemPrompt] = useState("You are a USMC AI agent. Provide relevant responses.");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [loadingText, setLoadingText] = useState("Assistant is thinking...");
+  const [storedSessionId, setStoredSessionId] = useState(() => {
+    // Initialize session_id from sessionStorage or generate a new one
+    let id = sessionStorage.getItem("session_id");
+    if (!id) {
+      id = generateUUID();
+      sessionStorage.setItem("session_id", id);
+    }
+    return id;
+  });
+  // const theme = useTheme();
+  // const isMobile = useMediaQuery(useTheme().breakpoints.down("md"));
 
-  // Initialize conversation with a welcome message
   const [conversation, setConversation] = useState([
     {
       role: "assistant",
@@ -210,37 +252,92 @@ Feel free to type your question below!`,
   const [loading, setLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [conversationsList, setConversationsList] = useState([]);
-  const [selectedFile, setSelectedFile] = useState(null); // **ADDED**
+  const [selectedFile, setSelectedFile] = useState(null);
 
-  // Ref for auto-scroll
+  // Refs
   const conversationRef = useRef(null);
+  const socketRef = useRef(null);
+
+
+
+  // Initialize WebSocket and handle session_id
+  useEffect(() => {
+    if (!socketRef.current) {
+      // Initialize Socket.IO with session_id as query parameter
+      socketRef.current = io("/", {
+        transports: ["websocket"],
+        withCredentials: true,
+        query: { session_id: storedSessionId },
+      });
+
+      // WebSocket event handlers
+      socketRef.current.on("connected", (data) => {
+        console.log("Connected with session_id:", data.session_id);
+      });
+
+      socketRef.current.on("connect_error", (err) => {
+        console.error("WebSocket Connection Error:", err.message);
+        setError("WebSocket connection failed. Please refresh the page.");
+      });
+
+      socketRef.current.on("task_complete", (data) => {
+        setStatusMessage(""); // Clear the status message
+      });
+
+      socketRef.current.io.on("reconnect_attempt", () => {
+        console.log("Attempting to reconnect...");
+      });
+
+      socketRef.current.io.on("reconnect_failed", () => {
+        console.error("Reconnection failed.");
+        setError("Unable to reconnect to the server. Please refresh the page.");
+      });
+    }
+
+    // Cleanup WebSocket on component unmount
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+        console.log("Socket disconnected.");
+      }
+    };
+  }, [storedSessionId]); // Dependency ensures the effect re-runs only if storedSessionId changes
+
+  // Auto-scroll to the latest message
   useEffect(() => {
     if (conversationRef.current) {
       conversationRef.current.scrollTop = conversationRef.current.scrollHeight;
     }
   }, [conversation]);
 
-  // Theme and Media Query for responsive Typography
-  const muiTheme = useTheme();
-  const isMobile = useMediaQuery(muiTheme.breakpoints.down("md"));
-
-  // Fetch chat history on component mount
+  // Fetch conversations list on component mount
   useEffect(() => {
-    fetchConversations();
-  }, []);
+    if (storedSessionId) {
+      console.log("Fetching /conversations with session_id:", storedSessionId);
+      fetchConversations(storedSessionId);
+    } else {
+      console.warn("Skipping fetchConversations because session_id is undefined");
+    }
+  }, [storedSessionId]);
 
-  const fetchConversations = async () => {
+  // Fetch Conversations List
+  const fetchConversations = async (sessionId) => {
     try {
-      const res = await fetch("/conversations", {
+      const res = await fetch(`/conversations?session_id=${sessionId}`, {
         method: "GET",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
-        credentials: "include"
+        credentials: "include",
       });
+
       if (res.ok) {
         const data = await res.json();
-        setConversationsList(data.conversations);
+        setConversationsList((prev) => {
+          const newList = data.conversations || [];
+          return JSON.stringify(prev) !== JSON.stringify(newList) ? newList : prev;
+        });
       } else {
         console.error("Failed to fetch conversations.");
       }
@@ -248,8 +345,9 @@ Feel free to type your question below!`,
       console.error("Error fetching conversations:", err);
     }
   };
+  
 
-  // Handle selecting a conversation
+  // Handle Selecting a Conversation
   const selectConversation = async (convo) => {
     try {
       const res = await fetch(`/conversations/${convo.id}`, {
@@ -271,7 +369,7 @@ Feel free to type your question below!`,
     }
   };
 
-  // Handle starting a new conversation
+  // Handle Starting a New Conversation
   const startNewConversation = async () => {
     try {
       const res = await fetch("/conversations/new", {
@@ -302,7 +400,7 @@ Feel free to type your question below!`,
         ]);
         setError("");
         // Optionally, fetch conversations list again
-        fetchConversations();
+        // fetchConversations();
       } else {
         console.error("Failed to create new conversation.");
       }
@@ -311,7 +409,7 @@ Feel free to type your question below!`,
     }
   };
 
-  // Handle file selection **ADDED**
+  // Handle File Selection **ADDED**
   const fileInputRef = useRef(null);
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
@@ -320,20 +418,40 @@ Feel free to type your question below!`,
     }
   };
 
-  // Handle clicking the upload button **ADDED**
+  // Handle Clicking the Upload Button **ADDED**
   const handleUploadClick = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
     }
   };
 
-  // Send message logic
+  // Send Message Logic
   const sendMessage = async () => {
     setError("");
     if (!message.trim() && !selectedFile) { // **CHANGED**
       setError("Please enter a message or upload a file.");
       return;
     }
+
+    if (socketRef.current) {
+      console.log("Sending message...");
+      console.log("Socket connected?", socketRef.current.connected);
+      
+      if (socketRef.current.connected) {
+        console.log("Socket connected!");
+      } else {
+        console.warn("Attempted to send message but socket is not connected.");
+      }
+    } else {
+      console.warn("Socket not initialized.");
+    }
+    
+    // const storedSessionId = sessionStorage.getItem("session_id");
+    // console.log('storedSessionId', storedSessionId)
+
+    // // or just store in a local variable if needed
+    // let storedSessionId = sessionStorage.getItem("session_id");
+    // console.log("session_id:", storedSessionId);
 
     const userMessage = {
       role: "user",
@@ -380,11 +498,13 @@ Feel free to type your question below!`,
       payload.append("system_prompt", systemPrompt.trim());
       payload.append("temperature", temperature);
       payload.append("file", selectedFile); // **ADDED**
+      payload.append("room", storedSessionId); // **ADDED**
 
       fetchOptions = {
         method: "POST",
         body: payload,
         credentials: "include",
+        // Removed 'X-Session-ID' header
       };
     } else {
       // Send as JSON
@@ -393,11 +513,15 @@ Feel free to type your question below!`,
         model,
         system_prompt: systemPrompt.trim(),
         temperature,
+        room: storedSessionId, // **ADDED**
       };
 
       fetchOptions = {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          // Removed 'X-Session-ID' header
+        },
         body: JSON.stringify(payload),
         credentials: "include",
       };
@@ -438,20 +562,24 @@ Feel free to type your question below!`,
         }
 
         // Determine the loading text based on intent
-        let loadingText = "Assistant is thinking...";  // Default loading text
+        let tempLoadingText = "Assistant is thinking...";  // Default loading text
         if (intent.internet_search) {
-          loadingText = "Searching the internet...";
+          tempLoadingText = "Searching the internet...";
         } else if (intent.image_generation) {
-          loadingText = "Creating the image...";
+          tempLoadingText = "Creating the image...";
         } else if (intent.code_intent) {
-          loadingText = "Processing your code request...";
+          tempLoadingText = "Processing your code request...";
         } // Add more conditions based on your intent keys
+
+        // Update the loadingText state
+        console.log('Updating loadingText with:', tempLoadingText)
+        setLoadingText(tempLoadingText); // **ADDED**
 
         // Update the placeholder with the specific loading text
         setConversation((prev) =>
           prev.map((msg) =>
             msg.id === placeholderId
-              ? { ...msg, content: loadingText }
+              ? { ...msg, content: tempLoadingText }
               : msg
           )
         );
@@ -468,7 +596,12 @@ Feel free to type your question below!`,
           );
         }, 1000); // Adjust delay as needed
 
-        fetchConversations();
+        if (storedSessionId) {
+          console.log("Fetching /conversations with session_id:", storedSessionId);
+          fetchConversations(storedSessionId);
+        } else {
+          console.warn("Skipping fetchConversations because session_id is undefined");
+        }
       }
     } catch (err) {
       console.error(err);
@@ -493,18 +626,6 @@ Feel free to type your question below!`,
       sendMessage();
     }
   };
-
-  // Removed react-window Row renderer for simplicity
-  /*
-  const Row = ({ index, style }) => {
-    const msg = conversation[index];
-    return (
-      <div style={style}>
-        <ChatMessage msg={msg} />
-      </div>
-    );
-  };
-  */
 
   return (
     <ThemeProvider theme={theme}>
@@ -666,10 +787,9 @@ Feel free to type your question below!`,
                   pr: { xs: 0, sm: 1 },
                 }}
               >
-                {/* Removed Virtualized Chat Messages for Debugging */}
-                {/* Use standard mapping to render messages */}
+                {/* Standard Mapping to Render Messages */}
                 {conversation.map((msg) => (
-                  <ChatMessage key={msg.id} msg={msg} />
+                  <ChatMessage key={msg.id} msg={msg} loadingText={loadingText} /> // **UPDATED**
                 ))}
               </Box>
             </ErrorBoundary>
@@ -693,8 +813,6 @@ Feel free to type your question below!`,
                 aria-label="upload"
               >
                 <UploadFileIcon />
-                {/* Alternatively, use react-icons */}
-                {/* <FaUpload /> */}
               </IconButton>
 
               {/* Text Input */}
@@ -707,7 +825,6 @@ Feel free to type your question below!`,
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyPress={handleKeyPress}
-                // Removed onBlur to prevent unintended scrolling
                 InputLabelProps={{ style: { color: '#ffffff' } }}
                 InputProps={{
                   style: { color: '#ffffff', backgroundColor: '#333333', borderRadius: '4px' },
@@ -738,6 +855,13 @@ Feel free to type your question below!`,
             {selectedFile && (
               <Typography variant="body2" sx={{ mt: 1, color: '#FFD700' }}>
                 Selected File: {selectedFile.name}
+              </Typography>
+            )}
+
+            {/* Display Status Message if Exists */}
+            {statusMessage && (
+              <Typography variant="body2" sx={{ mt: 1, color: '#FFD700' }}>
+                Status: {statusMessage}
               </Typography>
             )}
 

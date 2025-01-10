@@ -64,7 +64,7 @@ class OrchestrationAnalysisCog:
 
             analysis_prompt.append({"role": "user", "content": user_message})
 
-            print(f'analysis_prompt: {analysis_prompt}', flush=True)
+            # print(f'analysis_prompt: {analysis_prompt}', flush=True)
 
             response = self.client.chat.completions.create(
                 model="gpt-4o",

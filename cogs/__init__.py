@@ -7,8 +7,8 @@ from .web_search import WebSearchCog
 from .code_files import CodeFilesCog
 
 
-def register_cogs(app, flask_app):
-    chat_cog = ChatCog(app, flask_app)
+def register_cogs(app, flask_app, socketio):
+    chat_cog = ChatCog(app, flask_app, socketio)
     uploads_cog = UploadsCog(chat_cog.upload_folder)
     conversations_cog = ConversationsCog()
     orchestration_analysis_cog = OrchestrationAnalysisCog(chat_cog.client)
@@ -18,4 +18,5 @@ def register_cogs(app, flask_app):
     app.register_blueprint(chat_cog.bp)
     app.register_blueprint(uploads_cog.bp)
     app.register_blueprint(conversations_cog.bp)
+    print('Cogs loaded', flush=True)
     # Register other cogs as needed
