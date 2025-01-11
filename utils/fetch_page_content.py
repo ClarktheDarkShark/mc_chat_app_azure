@@ -11,7 +11,7 @@ def fetch_page_content(url):
     try:
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            # print(f"Failed to fetch {url}: Status {response.status_code}")
+            print(f"Failed to fetch {url}: Status {response.status_code}")
             return None
 
         # Check if the response is a PDF by content type
@@ -24,10 +24,20 @@ def fetch_page_content(url):
         else:
             # Handle HTML content
             soup = BeautifulSoup(response.text, 'html.parser')
-            paragraphs = soup.find_all('p')
-            content = '\n'.join([para.get_text() for para in paragraphs])
-            # print("\nfetch_page_content (HTML)\n", content[:3000])  # Print first 500 characters
-            return content
+
+            # Try extracting text from various tags
+            tags_to_search = ['p', 'div', 'span']
+            content = []
+            for tag in tags_to_search:
+                elements = soup.find_all(tag)
+                for element in elements:
+                    text = element.get_text(strip=True)
+                    if text:  # Skip empty or whitespace-only text
+                        content.append(text)
+
+            full_content = '\n'.join(content)
+            # print("\nfetch_page_content (HTML)\n", full_content[:3000])  # Print first 3000 characters
+            return full_content if content else "No text content found."
     except Exception as e:
         print(f"Exception while fetching page content from {url}: {e}")
         return None

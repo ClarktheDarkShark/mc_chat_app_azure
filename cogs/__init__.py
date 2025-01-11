@@ -7,6 +7,7 @@ from .web_search import WebSearchCog
 from .code_files import CodeFilesCog
 
 
+
 def register_cogs(app, flask_app, socketio):
     chat_cog = ChatCog(app, flask_app, socketio)
     uploads_cog = UploadsCog(chat_cog.upload_folder)
@@ -14,6 +15,7 @@ def register_cogs(app, flask_app, socketio):
     orchestration_analysis_cog = OrchestrationAnalysisCog(chat_cog.client)
     web_search_cog = WebSearchCog(openai_client=chat_cog.client)
     code_files_cog = CodeFilesCog()
+
 
     app.register_blueprint(chat_cog.bp)
     app.register_blueprint(uploads_cog.bp)

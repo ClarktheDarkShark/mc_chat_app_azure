@@ -6,7 +6,7 @@ import hashlib
 from flask import current_app
 
 class CodeStructureVisualizerCog:
-    def __init__(self, upload_folder):
+    def __init__(self, upload_folder=None):
         """
         Initialize the CodeStructureVisualizerCog.
 
@@ -27,12 +27,13 @@ class CodeStructureVisualizerCog:
         # Maximum recursion depth
         self.max_depth = 4
 
-    def generate_codebase_structure_diagram(self):
+    def generate_codebase_structure_diagram(self, upload_folder=None):
         """
         Generate a visual representation of the codebase structure using Graphviz.
 
         :return: URL path to the generated image or None if generation fails.
         """
+        self.upload_folder = upload_folder
         try:
             # Define the root directory to scan (project root)
             current_file_dir = os.path.dirname(os.path.abspath(__file__))  # Directory where this cog is located

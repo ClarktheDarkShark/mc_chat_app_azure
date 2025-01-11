@@ -632,11 +632,11 @@ Feel free to type your question below!`,
       <Box
         sx={{
           backgroundColor: 'background.default',
-          minHeight: '100vh',
+          minHeight: '90vh',
           p: { xs: 1, sm: 2 },
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'flex-start',
+          justifyContent: 'center',
           border: 'none',
           margin: 0,
           padding: 0,
@@ -702,7 +702,7 @@ Feel free to type your question below!`,
               flexGrow: 1,
               display: 'flex',
               flexDirection: 'column',
-              height: '100%',
+              height: '95%',
               borderRadius: 3,
               backgroundColor: 'background.paper',
               boxShadow: 'none',
@@ -780,6 +780,9 @@ Feel free to type your question below!`,
               <Box
                 ref={conversationRef}
                 sx={{
+                  display: 'flex',            // Enable flexbox
+                  flexDirection: 'column',    // Stack messages vertically
+                  justifyContent: 'flex-end', // Align messages at the bottom
                   flexGrow: 1,
                   overflowY: 'auto',
                   maxHeight: { xs: '70vh', sm: '80vh' },

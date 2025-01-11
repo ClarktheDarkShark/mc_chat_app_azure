@@ -16,10 +16,10 @@ from azure.keyvault.secrets import SecretClient
 from flask_socketio import SocketIO, emit, join_room
 from datetime import timedelta
 
-import logging
+# import logging
 
-logging.basicConfig()
-logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+# logging.basicConfig()
+# logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
 
 # Load environment variables from a .env file if present
@@ -158,7 +158,6 @@ def handle_exception(e):
 # ---------------- CREATE APP & SOCKETIO GLOBALLY ----------------
 # Expose the SocketIO instance as the WSGI callable for Gunicorn
 print(f"SocketIO initialized: {socketio}", flush=True)
-print(f"SocketIO callable status: {callable(socketio)}", flush=True)
 application = app
-print(f"SocketIO callable status: {callable(application)}", flush=True)
+print(f"SocketIO callable status (YOO): {callable(application)}", flush=True)
 

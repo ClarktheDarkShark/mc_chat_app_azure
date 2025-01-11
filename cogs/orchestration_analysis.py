@@ -40,7 +40,7 @@ class OrchestrationAnalysisCog:
                         'Guidelines:\n'
                         '1. **image_generation** should be True only when an image is requested. Example: "Create an image of a USMC officer saluting", "make an image of an amphibious assault." \n'
                         '2. **image_prompt** should contain the prompt for image generation if **image_generation** is True.\n'
-                        '3. **internet_search** should be True when the user asks for information that might require an internet search. If asking about an uploaded file, set to False.\n'
+                        '3. **internet_search** should be True when the user asks for information that might require an internet search. If asking about an uploaded file, set to False. If they say "That is wrong," set to True.\n'
                         '4. **file_orchestration** should be True when the user asks for information about any uploaded file. This includes:\n'
                         f'   - Specific file references by their plain text titles from this list: {file_list}.\n'
                         f'   - General inquiries about the uploaded files, such as "What files are uploaded?" or "Show me the uploaded files."\n'

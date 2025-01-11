@@ -49,9 +49,34 @@ class WebSearchCog:
         Use the provided OpenAI client to generate optimized search terms from user input.
         """
         prompt = (
-            f"Generate concise search terms for a Google search based on the user input. Return only the search terms, with no additional formatting or headings. "
-            f"Be as brief and relevant as possible. The current date, when asked for current information, is {current_date}. You are only retrieving 3 websites, so it is critical that the information produces quality result websites."
-            f"Prefer .mil domains when applicable. Do not use quotation marks."
+            f'''
+Generate concise and relevant search terms for a Google search based on the user input. Return only the search terms, with no additional formatting, explanations, or headings. 
+
+Guidelines:
+1. Prioritize brevity and relevance to maximize the accuracy of search results.
+2. Include the current date, {current_date}, in most searches to ensure recent and up-to-date information.
+3. When appropriate, prefer .mil domains, especially for military-related topics.
+4. For questions about official standards (e.g., grooming standards, PFT standards, etc.), include "MCO" and ".mil" in the search terms.
+5. Do not use quotation marks, special characters, or unnecessary words.
+
+Your goal is to produce search terms that consistently lead to high-quality, authoritative websites. Assume the user can access only three websites, so precision is critical.
+
+Examples:
+- **User Input:** "What are the current Marine Corps grooming standards?"
+  **Search Terms:** "Marine Corps grooming standards 2025 MCO .mil"
+  
+- **User Input:** "How do I improve my pull-up score for the PFT?"
+  **Search Terms:** "improve pull-up score Marine Corps PFT 2025"
+
+- **User Input:** "What is the max score for the Marine Corps PFT?"
+  **Search Terms:** "Marine Corps PFT max score 2025 MCO .mil"
+
+- **User Input:** "What benefits do retired Marines get in 2025?"
+  **Search Terms:** "Marine Corps retirement benefits 2025"
+
+- **User Input:** "Who is eligible for Tricare benefits?"
+  **Search Terms:** "Tricare benefits eligibility 2025 .mil"
+            '''
         )
 
         messages = [
@@ -151,7 +176,7 @@ class WebSearchCog:
         if not items:
             return "No search results found."
 
-        urls = [item.get('link') for item in items[:3] if item.get('link')]
+        urls = [item.get('link') for item in items[:4] if item.get('link')]
         if not urls:
             return "No valid URLs found in search results."
 
@@ -161,8 +186,8 @@ class WebSearchCog:
             content = fetch_page_content(url)
             if content:
                 # Highlight URL clearly for LLM
-                content = f"### Source URL:\n{url}\n\n**Content:**\n{content}"
-                contents.append(content[:3000])  # Limit content length
+                content = f"### Source URL:\n{url}\n\n**Content:**\n{content}\n"
+                contents.append(content[:6000])  # Limit content length
 
         return '\n'.join(contents) if contents else "No detailed information found."
 
