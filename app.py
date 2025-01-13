@@ -16,10 +16,10 @@ from azure.keyvault.secrets import SecretClient
 from flask_socketio import SocketIO, emit, join_room
 from datetime import timedelta
 
-# import logging
+import logging
 
-# logging.basicConfig()
-# logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+logging.basicConfig()
+logging.getLogger('sqlalchemy.engine').setLevel(logging.DEBUG)
 
 
 # Load environment variables from a .env file if present
@@ -78,7 +78,7 @@ os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 app.config['PROPAGATE_EXCEPTIONS'] = True
 app.config['REQUEST_TIMEOUT'] = 60  # 60 seconds
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # Limit file size to 16 MB
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # Limit file size to 16 MB
 
 # **New Session Cookie Configurations**
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # Allows cross-site cookies
@@ -96,15 +96,9 @@ if uri.startswith("postgres://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = uri
 print("self.app.config['SQLALCHEMY_DATABASE_URI']:", app.config['SQLALCHEMY_DATABASE_URI'], flush=True)
 
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_pre_ping': True,              # Checks connections for liveness
-    'pool_recycle': 3600,               # Recycles connections after 1 hour
-    'connect_args': {
-        'sslmode': 'require'            # Enforces SSL connections
-    }
-}
+app.config["SQLALCHEMY_ECHO"] = True
+
 
 # Initialize extensions
 CORS(app, supports_credentials=True, origins=[
@@ -115,6 +109,14 @@ CORS(app, supports_credentials=True, origins=[
 
 Session(app)  # Initialize server-side sessions
 db.init_app(app)  # Initialize the database
+
+@app.before_request
+def ping_db():
+    try:
+        db.session.execute("SELECT 1")
+    except:
+        db.session.rollback()
+
 
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
@@ -159,5 +161,5 @@ def handle_exception(e):
 # Expose the SocketIO instance as the WSGI callable for Gunicorn
 print(f"SocketIO initialized: {socketio}", flush=True)
 application = app
-print(f"SocketIO callable status (YOO): {callable(application)}", flush=True)
+print(f"SocketIO callable status (ZOO): {callable(application)}", flush=True)
 

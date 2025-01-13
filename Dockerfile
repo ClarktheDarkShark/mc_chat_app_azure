@@ -38,7 +38,7 @@ EXPOSE 3000
 # Run the app using Gunicorn with Eventlet for async and increased timeout
 CMD ["gunicorn", \
      "--worker-class", "eventlet", \
-     "-w", "4", \
+     "-w", "1", \
      "-b", "0.0.0.0:3000", \
      "--timeout", "120", \
      "--max-requests", "1000", \

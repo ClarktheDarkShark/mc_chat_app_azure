@@ -1,6 +1,5 @@
 # cogs/uploads.py
 from flask import Blueprint, send_from_directory, jsonify, session
-from db import db
 from models import UploadedFile
 import os
 

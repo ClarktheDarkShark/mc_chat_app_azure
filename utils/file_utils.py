@@ -3,6 +3,7 @@ import io
 import uuid
 from datetime import datetime
 from werkzeug.utils import secure_filename
+import traceback
 
 # Existing imports
 from db import db
@@ -26,7 +27,7 @@ def process_uploaded_file(
     file=None,
     upload_folder=None,
     session_id=None,
-    db_session=None,
+    # db=None,
     read=False,
     path=None,
     use_azure=False,
@@ -88,17 +89,26 @@ def process_uploaded_file(
         except Exception as e:
             print("Error uploading to Azure Blob Storage:", e)
             return "Error uploading file.", None, None, None
+        try:
+            # Insert a record in the database with the Azure file info
+            uploaded_file = UploadedFile(
+                session_id=session_id,
+                filename=unique_filename,
+                original_filename=filename,
+                file_url=file_url,
+                file_type=file.content_type
+            )
+            db.session.add(uploaded_file)
+            db.session.commit()
+        except Exception as e:
+            # Rollback the session to avoid leaving it in a broken state
+            db.session.rollback()
+            print(f"Error while saving uploaded file record to the database: {e}", flush=True)
+            traceback.print_exc()
+            # Optionally, re-raise the exception to propagate it
+            raise e
+            
 
-        # Insert a record in the database with the Azure file info
-        uploaded_file = UploadedFile(
-            session_id=session_id,
-            filename=unique_filename,
-            original_filename=filename,
-            file_url=file_url,
-            file_type=file.content_type
-        )
-        db_session.session.add(uploaded_file)
-        db_session.session.commit()
 
         # Extract the text for indexing/LLM usage
         file_content = extract_content_from_memory(
@@ -131,16 +141,25 @@ def process_uploaded_file(
         print(flush=True)
 
         # Insert record in DB with local file path
-        uploaded_file = UploadedFile(
-            session_id=session_id,
-            filename=unique_filename,
-            original_filename=filename,
-            file_url=f"/uploads/{unique_filename}",
-            file_type=file.content_type
-        )
-        print(f'Adding to db: {uploaded_file}', flush=True)
-        db_session.session.add(uploaded_file)
-        db_session.session.commit()
+        try:
+            uploaded_file = UploadedFile(
+                session_id=session_id,
+                filename=unique_filename,
+                original_filename=filename,
+                file_url=f"/uploads/{unique_filename}",
+                file_type=file.content_type
+            )
+            print(f'Adding to db: {uploaded_file}', flush=True)
+            db.session.add(uploaded_file)
+            db.session.commit()
+        except Exception as e:
+            # Rollback the session to avoid leaving it in a broken state
+            db.session.rollback()
+            print(f"Error while saving uploaded file record to the database: {e}", flush=True)
+            traceback.print_exc()
+            # Optionally, re-raise the exception to propagate it
+            raise e
+
         print(f'Added to db: {uploaded_file}', flush=True)
 
         # Extract text from local file

@@ -57,25 +57,26 @@ Guidelines:
 2. Include the current date, {current_date}, in most searches to ensure recent and up-to-date information.
 3. When appropriate, prefer .mil domains, especially for military-related topics.
 4. For questions about official standards (e.g., grooming standards, PFT standards, etc.), include "MCO" and ".mil" in the search terms.
-5. Do not use quotation marks, special characters, or unnecessary words.
+5. Do not use quotation marks.
+6. Ensure the results are ideal as input for a google search to find the optimal results.
 
 Your goal is to produce search terms that consistently lead to high-quality, authoritative websites. Assume the user can access only three websites, so precision is critical.
 
 Examples:
-- **User Input:** "What are the current Marine Corps grooming standards?"
-  **Search Terms:** "Marine Corps grooming standards 2025 MCO .mil"
+- User Input: "What are the current Marine Corps grooming standards?"
+  Search Terms: "Marine Corps grooming standards 2025 MCO .mil"
   
-- **User Input:** "How do I improve my pull-up score for the PFT?"
-  **Search Terms:** "improve pull-up score Marine Corps PFT 2025"
+- User Input: "How do I improve my pull-up score for the PFT?"
+  Search Terms: "improve pull-up score Marine Corps PFT 2025"
 
-- **User Input:** "What is the max score for the Marine Corps PFT?"
-  **Search Terms:** "Marine Corps PFT max score 2025 MCO .mil"
+- User Input: "What is the max score for the Marine Corps PFT?"
+  Search Terms: "Marine Corps PFT max score 2025 MCO .mil"
 
-- **User Input:** "What benefits do retired Marines get in 2025?"
-  **Search Terms:** "Marine Corps retirement benefits 2025"
+- User Input: "What benefits do retired Marines get in 2025?"
+  Search Terms: "Marine Corps retirement benefits 2025"
 
-- **User Input:** "Who is eligible for Tricare benefits?"
-  **Search Terms:** "Tricare benefits eligibility 2025 .mil"
+- User Input: "Who is eligible for Tricare benefits?"
+  Search Terms: "Tricare benefits eligibility 2025 .mil"
             '''
         )
 
@@ -96,7 +97,7 @@ Examples:
                 max_tokens=60,
                 n=1,
                 stop=None,
-                temperature=0.4,
+                temperature=0.1,
             )
             # Extract the generated search terms
             search_terms = response.choices[0].message.content
@@ -135,7 +136,7 @@ Examples:
                     search_results = response.json()
                     items = search_results.get('items', [])
                     if not items:
-                        query += f'This is what you provided last time and resulted in no search results:\n{optimized_query}.\n\n Try again, but be more general to allow a broader search. Do not include "site" as a search term.'
+                        query += f'This is what you provided last time and resulted in no search results:\n{optimized_query}.\n\n Try again, but be more general to allow a broader search. Do not include "site" as a search term and do not incluide quotation marks.'
                         optimized_query = self.generate_search_terms(query, history)
                         print(f"Second Optimized Query: {optimized_query}", flush=True)
                         params = {
