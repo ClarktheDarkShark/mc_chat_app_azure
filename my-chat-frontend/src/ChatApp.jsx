@@ -32,6 +32,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
+import CssBaseline from '@mui/material/CssBaseline';
 
 // ErrorBoundary to catch rendering errors
 class ErrorBoundary extends React.Component {
@@ -71,7 +72,27 @@ const theme = createTheme({
       secondary: '#FFD700',
     },
   },
+  components: {
+    MuiCssBaseline: {
+      styleOverrides: {
+        body: {
+          margin: 0,
+          padding: 0,
+          width: '100%',
+          height: '100%',
+          backgroundColor: '#000000', // Matches background.default
+        },
+        html: {
+          width: '100%',
+          height: '100%',
+        },
+      },
+    },
+  },
 });
+
+// Use <CssBaseline /> in your app root component
+
 
 // Memoized ChatMessage
 const ChatMessage = memo(
@@ -149,7 +170,9 @@ const ChatMessage = memo(
     } else if (isAssistant) {
       // assistant text
       contentToRender = (
-        <ReactMarkdown>{msg.content || "**(No content available)**"}</ReactMarkdown>
+        <Box sx={{ wordBreak: "break-word", overflowWrap: "break-word" }}>
+          <ReactMarkdown>{msg.content || "**(No content available)**"}</ReactMarkdown>
+        </Box>
       );
     } else {
       // user text
@@ -646,18 +669,19 @@ function ChatApp() {
   // Render
   return (
     <ThemeProvider theme={theme}>
+      <CssBaseline />
       <Box
         sx={{
-          backgroundColor: "background.default",
-          minHeight: "90vh",
-          p: { xs: 1, sm: 2 },
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          margin: 0,
-          padding: 0,
+          backgroundColor: 'background.default',
+          width: '100vw',
+          height: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center', // Optional: Center content horizontally
         }}
       >
+
         <Container
           maxWidth="lg"
           sx={{

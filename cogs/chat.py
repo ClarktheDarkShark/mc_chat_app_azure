@@ -445,6 +445,8 @@ class ChatCog:
                 return "DB Connection Lost, Reset", 500
 
 
+
+
     # Additional Helper Methods
 
     def get_system_prompt(self):
