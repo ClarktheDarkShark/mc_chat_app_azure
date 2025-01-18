@@ -47,29 +47,29 @@ def static_proxy(path):
 # Set the SECRET_KEY securely
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY", os.urandom(24).hex())
 
-# Initialize Azure Key Vault Client
-key_vault_name = os.getenv("KEYVAULT_NAME")
-key_vault_uri = f"https://{key_vault_name}.vault.azure.net"
+# # Initialize Azure Key Vault Client
+# key_vault_name = os.getenv("KEYVAULT_NAME")
+# key_vault_uri = f"https://{key_vault_name}.vault.azure.net"
 
-try:
-    credential = DefaultAzureCredential()
-    secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
+# try:
+#     credential = DefaultAzureCredential()
+#     secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
     
-    # Fetch secrets from Key Vault
-    openai_key = secret_client.get_secret("OPENAI-KEY").value
-    google_key = secret_client.get_secret("GOOGLE-API-KEY").value
-    database_url = secret_client.get_secret("DATABASE-URL").value
+#     # Fetch secrets from Key Vault
+#     openai_key = secret_client.get_secret("OPENAI-KEY").value
+#     google_key = secret_client.get_secret("GOOGLE-API-KEY").value
+#     database_url = secret_client.get_secret("DATABASE-URL").value
     
-    # Set the fetched secrets to environment variables
-    os.environ["OPENAI_KEY"] = openai_key
-    os.environ["GOOGLE_API_KEY"] = google_key
-    os.environ["DATABASE_URL"] = database_url
-    print("Secrets fetched and environment variables set.", flush=True)
-except Exception as e:
-    print(f"Failed to fetch secrets from Key Vault: {e}", flush=True)
-    import traceback
-    traceback.print_exc()
-    raise SystemExit("App failed to start due to Key Vault error")
+#     # Set the fetched secrets to environment variables
+#     os.environ["OPENAI_KEY"] = openai_key
+#     os.environ["GOOGLE_API_KEY"] = google_key
+#     os.environ["DATABASE_URL"] = database_url
+#     print("Secrets fetched and environment variables set.", flush=True)
+# except Exception as e:
+#     print(f"Failed to fetch secrets from Key Vault: {e}", flush=True)
+#     import traceback
+#     traceback.print_exc()
+#     raise SystemExit("App failed to start due to Key Vault error")
 
 # Configuration
 app.config['SESSION_TYPE'] = 'filesystem'  # Use filesystem for session storage
@@ -86,7 +86,7 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # Limit file size to 16 MB
 
 # **New Session Cookie Configurations**
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # Allows cross-site cookies
-app.config['SESSION_COOKIE_SECURE'] = False     # Ensures cookies are sent over HTTPS
+app.config['SESSION_COOKIE_SECURE'] = True     # Ensures cookies are sent over HTTPS
 
 # Database configuration
 print("\nGetting DB credentials...", flush=True)
@@ -106,8 +106,7 @@ app.config["SQLALCHEMY_ECHO"] = False
 
 # Initialize extensions
 CORS(app, supports_credentials=True, origins=[
-    "http://localhost:3000",
-    "http://mc-chat-app.eastus.azurecontainer.io:3000"
+    "https://mc-chat-app.eastus.azurecontainer.io"
 ])
 
 
@@ -125,20 +124,23 @@ def ping_db():
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
 
-# Define your allowed origins
-frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
-allowed_origins = [
-    frontend_origin,  # Typically "http://localhost:3000" for development
-    "https://mc-chat-app.eastus.azurecontainer.io",  # Production origin
-]
+# # Define your allowed origins
+# frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+# allowed_origins = [
+#     frontend_origin,  # Typically "http://localhost:3000" for development
+#     "https://mc-chat-app.eastus.azurecontainer.io",  # Production origin
+# ]
 
 # Initialize Flask-SocketIO with the allowed origins
 socketio = SocketIO(
     app,
-    cors_allowed_origins=allowed_origins,
+    cors_allowed_origins=[
+        "https://mc-chat-app.eastus.azurecontainer.io"
+    ],
     transports=["websocket", "polling"],
     async_mode='eventlet'
 )
+
 
 
 print(f"SocketIO initialized: {socketio}", flush=True)

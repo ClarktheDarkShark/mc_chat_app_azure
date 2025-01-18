@@ -62,8 +62,8 @@ RUN ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
 
 # Expose ports for HTTP and HTTPS
-EXPOSE 80
-EXPOSE 443
+# EXPOSE 80
+# EXPOSE 443
 
 # Copy Supervisor configuration file
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf

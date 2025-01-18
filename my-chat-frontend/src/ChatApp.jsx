@@ -384,16 +384,14 @@ function ChatApp() {
   // Initialize WebSocket
   useEffect(() => {
     if (!socketRef.current) {
-      const baseURL = window.location.protocol + "//" + window.location.host;
+      const baseURL = "https://mc-chat-app.eastus.azurecontainer.io";
+      // const baseURL = window.location.protocol + "//" + window.location.host;
 
       socketRef.current = io(baseURL, {
         transports: ["websocket"],
         withCredentials: true,
         query: { session_id: storedSessionId },
         reconnection: true,
-        reconnectionAttempts: 10,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
       });
 
       socketRef.current.on("connected", (data) => {

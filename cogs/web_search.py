@@ -22,16 +22,18 @@ class WebSearchCog:
         :param openai_client: An instance of the OpenAI client to use for generating search terms.
         """
         # **Initialize Azure Key Vault Client**
-        key_vault_name = os.getenv("KEYVAULT_NAME")  # **Modified Line**
-        key_vault_uri = f"https://{key_vault_name}.vault.azure.net"
+        # key_vault_name = os.getenv("KEYVAULT_NAME")  # **Modified Line**
+        # key_vault_uri = f"https://{key_vault_name}.vault.azure.net"
 
         try:
-            credential = DefaultAzureCredential()
-            secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
+            # credential = DefaultAzureCredential()
+            # secret_client = SecretClient(vault_url=key_vault_uri, credential=credential)
 
             # **Fetch secrets from Key Vault**
-            self.search_api_key = secret_client.get_secret("GOOGLE-API-KEY").value  # **Added Line**
-            self.search_engine_id = secret_client.get_secret("SEARCH-ENGINE-ID").value  # **Added Line**
+            # self.search_api_key = secret_client.get_secret("GOOGLE-API-KEY").value  # **Added Line**
+            # self.search_engine_id = secret_client.get_secret("SEARCH-ENGINE-ID").value  # **Added Line**
+            self.search_api_key = os.getenv("GOOGLE_API_KEY").value  # **Added Line**
+            self.search_engine_id = os.getenv("SEARCH_ENGINE_ID").value  # **Added Line**
 
         except Exception as e:
             print(f"Failed to fetch secrets from Key Vault: {e}")
