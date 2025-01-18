@@ -59,12 +59,14 @@ MarkupSafe==3.0.1
 multidict==6.1.0
 oauthlib==3.2.2
 openai==1.50.2
-openpyxl==3.0.9
+openpyxl==3.1.0
 outcome==1.3.0.post0
+pandas
 pdf2image==1.17.0
 pillow==10.4.0
 proto-plus==1.24.0
 protobuf==5.28.2
+psycogreen==1.0.2
 pyasn1==0.6.1
 pyautogui==0.9.54
 psycopg2

@@ -2,6 +2,10 @@
 import eventlet
 eventlet.monkey_patch()
 
+# Patch psycopg2 for eventlet compatibility
+from psycogreen.eventlet import patch_psycopg
+patch_psycopg()
+
 import os
 import uuid
 from flask import Flask, send_from_directory, request, session, jsonify
@@ -16,10 +20,10 @@ from azure.keyvault.secrets import SecretClient
 from flask_socketio import SocketIO, emit, join_room
 from datetime import timedelta
 
-import logging
+# import logging
 
-logging.basicConfig()
-logging.getLogger('sqlalchemy.engine').setLevel(logging.DEBUG)
+# logging.basicConfig()
+# logging.getLogger('sqlalchemy.engine').setLevel(logging.DEBUG)
 
 
 # Load environment variables from a .env file if present
@@ -97,7 +101,7 @@ app.config["SQLALCHEMY_DATABASE_URI"] = uri
 print("self.app.config['SQLALCHEMY_DATABASE_URI']:", app.config['SQLALCHEMY_DATABASE_URI'], flush=True)
 
 
-app.config["SQLALCHEMY_ECHO"] = True
+app.config["SQLALCHEMY_ECHO"] = False
 
 
 # Initialize extensions
@@ -121,13 +125,14 @@ def ping_db():
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
 
-# Initialize Flask-SocketIO without Redis
+# Define your allowed origins
 frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
 allowed_origins = [
-    "http://localhost:3000",
-    "http://mc-chat-app.eastus.azurecontainer.io:3000"
+    frontend_origin,  # Typically "http://localhost:3000" for development
+    "https://mc-chat-app.eastus.azurecontainer.io",  # Production origin
 ]
 
+# Initialize Flask-SocketIO with the allowed origins
 socketio = SocketIO(
     app,
     cors_allowed_origins=allowed_origins,
@@ -148,6 +153,15 @@ with app.app_context():
     print("Database tables created.", flush=True)
 
 
+@app.after_request
+def add_header(response):
+    # Remove X-Frame-Options if it exists or set to allow all
+    response.headers['X-Frame-Options'] = 'ALLOWALL'
+    
+    # Alternatively, you can specify a more restrictive Content-Security-Policy:
+    # response.headers['Content-Security-Policy'] = "frame-ancestors 'self' http://your-parent-site.com"
+    
+    return response
 
 # ---------------- GLOBAL ERROR HANDLER ----------------
 @app.errorhandler(Exception)

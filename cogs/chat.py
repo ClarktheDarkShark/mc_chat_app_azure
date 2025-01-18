@@ -11,25 +11,27 @@ from db import db
 import traceback
 from models import Conversation, Message, UploadedFile
 from datetime import datetime
-# Import the updated process_uploaded_file with Azure support
-# from utils.file_utils import process_uploaded_file
-from flask_socketio import rooms
-from sqlalchemy.orm import joinedload
+from flask_socketio import SocketIO, emit, join_room, rooms
+from eventlet.timeout import Timeout
+# from sqlalchemy.orm import joinedload
 
-from cogs.orchestration_analysis import OrchestrationAnalysisCog
+# Import the updated process_uploaded_file with Azure support
+from utils.file_utils import process_uploaded_file
 from utils.response_generation import generate_image, generate_chat_response
+from cogs.orchestration_analysis import OrchestrationAnalysisCog
 from .web_search import WebSearchCog
 from .code_files import CodeFilesCog
-from cogs.code_structure_visualizer import CodeStructureVisualizerCog  # New import
+from cogs.code_structure_visualizer import CodeStructureVisualizerCog
+from cogs.document_feedback_processor import process_stakeholder_feedback
 # from langgraph import LangGraph
 
 import io
 from models import UploadedFile
 
-# Document parsers
-from docx import Document
-from openpyxl import load_workbook
-from PyPDF2 import PdfReader
+# # Document parsers
+# from docx import Document
+# from openpyxl import load_workbook
+# from PyPDF2 import PdfReader
 
 
 # Azure
@@ -44,8 +46,6 @@ except ImportError:
 WORD_LIMIT = 50000
 MAX_MESSAGES = 20  # <--- Limit the number of messages in memory
 
-# **New Imports for SocketIO**
-from flask_socketio import SocketIO, emit, join_room  # <-- Added
 
 
 class ChatCog:
@@ -167,19 +167,18 @@ class ChatCog:
             else:
                 print('Orchestration event missing session_id or action.', flush=True)
 
-
     def _chat_logic(self):
         print(flush=True)
         try:
             # Check the Content-Type of the request
             if request.content_type.startswith('multipart/form-data'):
-                # Handle file uploads
+                # Handle file uploads (multiple files)
                 message = request.form.get("message", "")
                 model = request.form.get("model", "gpt-4o-mini")
                 temperature = float(request.form.get("temperature", 0.7))
-                file = request.files.get("file")
+                files = request.files.getlist("files")
 
-                if not file and not message:
+                if not files and not message:
                     raise ValueError("No message or file provided")
 
                 session_id = request.form.get("room")
@@ -199,7 +198,7 @@ class ChatCog:
                 message = data.get("message", "")
                 model = data.get("model", "gpt-4o-mini")
                 temperature = float(data.get("temperature", 0.7))
-                file = None  # No file in JSON requests
+                files = None  # No file in JSON requests
 
                 if not session_id:
                     session_id = str(uuid.uuid4())  # Generate a new session ID if missing
@@ -212,34 +211,15 @@ class ChatCog:
 
             # Retrieve system prompt
             system_prompt = self.get_system_prompt()
-            # print(f"System Prompt: {system_prompt}", flush=True)
 
-            # Retrieve other parameters
-            message, model, temperature, file = self.get_request_parameters()
-            # print(f"Model: {model}, Temperature: {temperature}", flush=True)
+            # Retrieve other parameters (this will return files as a list if multipart/form-data)
+            message, model, temperature, files = self.get_request_parameters()
             print(f"User Message: {message}", flush=True)
 
-            # ---------------------------------------------------------------
-            # Use updated process_uploaded_file that conditionally uses Azure
-            # ---------------------------------------------------------------
-
-            file_content, file_url, file_type, uploaded_file = self.process_uploaded_file(
-                file=file,
-                upload_folder=self.upload_folder,    # local fallback folder
-                session_id=session_id,
-                # db=db,
-                # Toggle Azure settings
-                use_azure=self.use_azure,            # only True if we found a conn_str
-                blob_service_client=self.blob_service_client,
-                container_name=self.azure_container_name
-            )
-
-            print('File upload portion cleared.', flush=True)
-            if not message and not file_url:
-                return jsonify({"error": "No message or file provided"}), 400
+            print(f"files: {files}")
 
             # Manage conversation
-            print('Getting conversatoin ID.', flush=True)
+            print('Getting conversation ID.', flush=True)
             try:
                 conversation_id, conversation = self.manage_conversation(session_id)
                 if not conversation:
@@ -247,10 +227,34 @@ class ChatCog:
             except Exception as e:
                 print(f"Exception in manage_conversation: {e}", flush=True)
                 traceback.print_exc()
-                # optionally re-raise
                 raise
             if not conversation:
                 return jsonify({"error": "Conversation not found or unauthorized"}), 404
+
+            # Process uploaded files if present
+            print(flush=True)
+            uploaded_files = []
+            if files:
+                for file_item in files:
+                    file_content, file_url, file_type, uploaded_file = process_uploaded_file(
+                        file=file_item,
+                        upload_folder=self.upload_folder,    # local fallback folder
+                        session_id=session_id,
+                        use_azure=self.use_azure,            # only True if we found a conn_str
+                        blob_service_client=self.blob_service_client,
+                        container_name=self.azure_container_name,
+                        conversation_id=conversation_id
+                    )
+                    uploaded_files.append(uploaded_file)
+
+                    print(f'file_url: {file_url}', flush=True)
+                    print(f'uploaded_file.file_url: {uploaded_file.file_url}', flush=True)
+
+
+            print(flush=True)
+            print('File upload portion cleared.', flush=True)
+            if not message and not uploaded_files:
+                return jsonify({"error": "No message or file provided"}), 400
 
             # Get conversation history and truncate if needed
             print('Getting conversation history.', flush=True)
@@ -267,9 +271,9 @@ class ChatCog:
             )
 
             if not message:
-                message = f'User is uploading a file. Respond in acknowledgement that a file was uploaded. Here is the file name: {uploaded_file.original_filename}'
-
-            # print(f"Orchestration: {orchestration}", flush=True)
+                # If message is empty, acknowledge file upload(s)
+                file_names = ", ".join([uf.original_filename for uf in uploaded_files])
+                message = f'User is uploading file(s). Respond in acknowledgement that file(s) were uploaded. Here are the file names: {file_names}'
 
             # Determine status message based on orchestration
             if orchestration.get("internet_search"):
@@ -288,17 +292,29 @@ class ChatCog:
             print(f'Emitting with session id: {session_id}', flush=True)
             self.socketio.emit('status_update', {'message': status_message}, room=session_id)
 
-            # Handle orchestration-specific actions
-            if orchestration.get("image_generation", False):
+            if orchestration.get("crm_review", False):
+                if not uploaded_files:
+                    file_ids = orchestration.get("file_ids", [])
+                    # Ensure that only the first 2 file IDs are used.
+                    file_ids = file_ids[-2:]
+                    # Retrieve the corresponding files from the DB using the provided file_ids.
+                    uploaded_files = UploadedFile.query.filter(UploadedFile.id.in_(file_ids)).all()
+
+                response = self.handle_crm(uploaded_files, message, conversation_history, orchestration)
+                print(f'response: {response}', flush=True)
+                # self.socketio.emit('task_complete', {'answer': response.json.get("assistant_reply", "")}, room=session_id)
+                return response
+
+            elif orchestration.get("image_generation", False):
                 response = self.handle_image_generation(orchestration, message, conversation_history, conversation_id)
                 print(f'response: {response}', flush=True)
                 # Emit task completion
-                self.socketio.emit('task_complete', {'answer': response['assistant_reply']}, room=session_id)
+                self.socketio.emit('task_complete', {'answer': response.json.get("assistant_reply", "")}, room=session_id)
                 return response
             elif orchestration.get("code_structure_orchestration", False):
                 response = self.handle_code_structure_visualization(orchestration, message, conversation_history, conversation_id)
                 # Emit task completion
-                self.socketio.emit('task_complete', {'answer': response['assistant_reply']}, room=session_id)
+                self.socketio.emit('task_complete', {'answer': response.json.get("assistant_reply", "")}, room=session_id)
                 return response
             else:
                 # Handle other orchestrations
@@ -312,7 +328,6 @@ class ChatCog:
 
                 # Generate chat response
                 assistant_reply = generate_chat_response(self.client, messages, model, temperature)
-                # print(f"Assistant Reply: {assistant_reply}", flush=True)
 
                 # Save messages to the database
                 self.save_messages(conversation_id, "user", message)
@@ -329,10 +344,14 @@ class ChatCog:
                     "assistant_reply": assistant_reply,
                     "conversation_history": conversation_history,  # truncated in memory above
                     "orchestration": orchestration,
-                    "fileUrl": uploaded_file.file_url if uploaded_file else None,
-                    "fileName": uploaded_file.original_filename if uploaded_file else None,
-                    "fileType": uploaded_file.file_type if uploaded_file else None,
-                    "fileId": uploaded_file.id if uploaded_file else None
+                    "files": [
+                        {
+                            "fileUrl": uf.file_url,
+                            "fileName": uf.original_filename,
+                            "fileType": uf.file_type,
+                            "fileId": uf.id
+                        } for uf in uploaded_files
+                    ] if uploaded_files else None
                 }), 200
 
         except Exception as e:
@@ -340,12 +359,10 @@ class ChatCog:
             traceback.print_exc()
             return jsonify({"error": str(e)}), 500
 
-
     def add_routes(self):
         @self.bp.route("/chat", methods=["POST"])
         def chat():
             return self._chat_logic()
-
 
         # **New Route to Serve Uploaded Images (or any file) Locally**
         @self.bp.route('/uploads/<filename>')
@@ -360,7 +377,6 @@ class ChatCog:
             except Exception as e:
                 print(f"Error serving file {filename}: {e}", flush=True)
                 return jsonify({"error": "File not found."}), 404
-
 
         # ############################################################################
         # # NEW Conversation routes go below
@@ -404,8 +420,6 @@ class ChatCog:
                 traceback.print_exc()
                 return jsonify({"error": "Failed to retrieve conversation"}), 500
 
-
-
         @self.bp.route("/conversations/new", methods=["POST"])
         def create_new_conversation():
             """
@@ -444,9 +458,6 @@ class ChatCog:
                 db.session.rollback()
                 return "DB Connection Lost, Reset", 500
 
-
-
-
     # Additional Helper Methods
 
     def get_system_prompt(self):
@@ -471,7 +482,7 @@ class ChatCog:
                 temperature = float(request.form.get("temperature", 0.7))
             except ValueError:
                 temperature = 0.7
-            file = request.files.get("file", None)
+            files = request.files.getlist("files")
         elif request.is_json:
             try:
                 data = request.get_json()
@@ -485,13 +496,13 @@ class ChatCog:
                 temperature = float(data.get("temperature", 0.7))
             except ValueError:
                 temperature = 0.7
-            file = None
+            files = None
         else:
             message = ""
             model = "gpt-4o-mini"
             temperature = 0.7
-            file = None
-        return message, model, temperature, file
+            files = None
+        return message, model, temperature, files
 
     def get_or_create_conversation(self, session_id, title="New Conversation", limit=100):
         """
@@ -513,7 +524,6 @@ class ChatCog:
                 db.session.add(conversation)
                 print(f"[get_or_create_conversation] Added new conversation to session.")
                 db.session.commit()  # Save changes to the database
-                # print(f"[get_or_create_conversation] Committed new conversation with ID: {conversation.id}")
         
             return conversation
         
@@ -524,33 +534,80 @@ class ChatCog:
             traceback.print_exc()
             raise
 
+    def handle_crm(self, uploaded_files, message, conversation_history, orchestration):
+        # Identify the document and CRM files
+        document_path = None
+        crm_file_path = None
+        print(f'uploaded_files: {uploaded_files}', flush=True)
+        for uploaded_file in uploaded_files:
+            # Assuming `uploaded_file` has a `filename` attribute
+            filename = uploaded_file.filename.lower()  # Normalize case for comparison
+            print(f'filename: {filename}', flush=True)
+            if filename.endswith((".pdf", ".docx")):
+                document_path = uploaded_file.file_url
+            elif "crm" in filename and filename.endswith((".csv", ".xlsx", ".xls")):
+                crm_file_path = uploaded_file.file_url
 
-    
+        # Check if both files are identified
+        if not document_path:
+            return jsonify({"error": "No document file (PDF or Word) was uploaded."}), 400
+        if not crm_file_path:
+            return jsonify({"error": "No CRM file (Excel or CSV) was uploaded."}), 400
+        
+        print('calling process_stakeholder_feedback...', flush=True)
+        assistant_reply = process_stakeholder_feedback(
+            document_path,
+            crm_file_path,
+            model="gpt-4o-mini",
+            temperature=0,  # e.g. 0.7
+            openai_client=openai        # your configured openai module/client
+        )
+
+
+        print(f'assistant_reply: {assistant_reply}', flush=True)
+        return jsonify({
+            "user_message": message,
+            "assistant_reply": assistant_reply,
+            "conversation_history": conversation_history,  # truncated in memory above
+            "orchestration": orchestration,
+            "files": [
+                {
+                    "fileUrl": uf.file_url,
+                    "fileName": uf.original_filename,
+                    "fileType": uf.file_type,
+                    "fileId": uf.id
+                } for uf in uploaded_files
+            ] if uploaded_files else None
+        }), 200
+
+
     def manage_conversation(self, session_id, limit=100):
         """
         Fetches or creates a conversation based on session_id.
         Returns a tuple of (conversation_id, Conversation object).
         """
         try:
-            # Debugging: print all conversations (potentially large if the table is big)
-            # all_conversations = Conversation.query.all()
-            # for conversation in all_conversations:
-            #     print(
-            #         f"ID: {conversation.id}, "
-            #         f"Session ID: {conversation.session_id}, "
-            #         f"Title: {conversation.title}, "
-            #         f"Timestamp: {conversation.timestamp}",
-            #         flush=True
-            #     )
-
             print(f"[manage_conversation] Managing conversation for session_id: {session_id}")
+            # Insert a dummy conversation with a non-null title
+            dummy = Conversation(session_id="dummy_for_warmup", title="dummy_title", timestamp=datetime.utcnow())
+            db.session.add(dummy)
+            db.session.flush()  # or db.session.commit()
 
+            # Now optionally roll back if you don't want to keep this record:
+            db.session.rollback()
+
+            # Optionally roll back the dummy change if it's not needed:
+            db.session.rollback()
             if db.session.query(Conversation).filter_by(session_id=session_id).first() is not None:
-                conversation = db.session.query(Conversation).filter_by(session_id=session_id).execution_options(timeout=5).first()
+                try:
+                    with Timeout(30):
+                        conversation = db.session.query(Conversation).filter_by(session_id=session_id).execution_options(timeout=5).first()
+                except Timeout:
+                    # Handle the timeout (e.g., log, retry, or return an error)
+                    conversation = None
                 print(f"[manage_conversation] conversation found => ID: {conversation.id if conversation else None}", flush=True)
             else:
                 conversation = None
-
 
             # If no conversation is found, create a new one
             if not conversation:
@@ -572,8 +629,6 @@ class ChatCog:
             traceback.print_exc()
             return None, None
 
-
-
     def get_conversation_history(self, conversation_id, limit=50, offset=0):
         """
         Retrieve messages from the database with pagination and return them as a list of {role, content}.
@@ -589,14 +644,12 @@ class ChatCog:
                     .all()
                 )
             else:
-                print(f"Error fetching conversation history: {e}", flush=True)
+                print(f"Error fetching conversation history.", flush=True)
                 return []
             return [{"role": msg.role, "content": msg.content} for msg in messages_db]
         except Exception as e:
             print(f"Error fetching conversation history: {e}", flush=True)
             return []
-
-
 
     def handle_orchestration(self, orchestration, session_id=None, conversation_id=None):
         supplemental_information = {}
@@ -604,6 +657,7 @@ class ChatCog:
         
         if orchestration.get("file_orchestration", False):
             supplemental_information, assistant_reply = self.handle_file_orchestration(orchestration, session_id)
+            
         elif orchestration.get("code_orchestration", False):
             code_content = self.code_files_cog.get_all_code_files_content()
             if code_content:
@@ -755,14 +809,12 @@ class ChatCog:
                             print(f"File exists. Processing file: {uploaded_file.original_filename}", flush=True)
                             # Process the uploaded file (adjust parameters as needed)
                             # read=True => means read from local path
-                            file_content = self.process_uploaded_file(
+                            file_content = process_uploaded_file(
                                 file=None,
                                 upload_folder=self.upload_folder,
                                 session_id=uploaded_file.session_id,
-                                # db=db,
                                 read=True,
                                 path=file_path,
-                                # Still pass Azure info, but read=True means we won't reupload
                                 use_azure=self.use_azure,
                                 blob_service_client=self.blob_service_client,
                                 container_name=self.azure_container_name
@@ -814,8 +866,6 @@ class ChatCog:
                     }
                 except Exception as e:
                     print(f"Error constructing supplemental information: {e}", flush=True)
-                    # If there's an error, do not include supplemental information
-
             # If there are invalid file IDs, inform the user
             if invalid_file_ids:
                 print("Informing user about invalid file_ids.", flush=True)
@@ -831,7 +881,6 @@ class ChatCog:
             print('Error:', e)
             return supplemental_information, assistant_reply
             
-
     def handle_image_generation(self, orchestration, user_message, conversation_history, conversation_id):
         """
         Handles image generation and returns a response immediately.
@@ -948,307 +997,307 @@ class ChatCog:
 
 
 
-    def process_uploaded_file(
-        self,
-        file=None,
-        upload_folder=None,
-        session_id=None,
-        # db=None,
-        read=False,
-        path=None,
-        use_azure=False,
-        blob_service_client=None,
-        container_name=None
-    ):
-        """
-        Handles file saving and processing.
+    # def process_uploaded_file(
+    #     self,
+    #     file=None,
+    #     upload_folder=None,
+    #     session_id=None,
+    #     # db=None,
+    #     read=False,
+    #     path=None,
+    #     use_azure=False,
+    #     blob_service_client=None,
+    #     container_name=None
+    # ):
+    #     """
+    #     Handles file saving and processing.
         
-        By default, files are stored locally (in `upload_folder`). 
-        If `use_azure=True` and a valid `blob_service_client` is provided,
-        files will be uploaded to Azure Blob Storage instead.
+    #     By default, files are stored locally (in `upload_folder`). 
+    #     If `use_azure=True` and a valid `blob_service_client` is provided,
+    #     files will be uploaded to Azure Blob Storage instead.
 
-        :param file: File object from the request.
-        :param upload_folder: Directory to save local uploads (if not using Azure).
-        :param session_id: Current session ID.
-        :param db_session: Database session.
-        :param read: If True, read the file content (from `path`) but do not upload.
-        :param path: Path to the file if reading.
-        :param use_azure: Whether to upload to Azure instead of saving locally.
-        :param blob_service_client: An instance of BlobServiceClient (if use_azure=True).
-        :param container_name: The name of the Azure container (if use_azure=True).
-        :return: Tuple (file_content, file_url, file_type, uploaded_file)
-        """
+    #     :param file: File object from the request.
+    #     :param upload_folder: Directory to save local uploads (if not using Azure).
+    #     :param session_id: Current session ID.
+    #     :param db_session: Database session.
+    #     :param read: If True, read the file content (from `path`) but do not upload.
+    #     :param path: Path to the file if reading.
+    #     :param use_azure: Whether to upload to Azure instead of saving locally.
+    #     :param blob_service_client: An instance of BlobServiceClient (if use_azure=True).
+    #     :param container_name: The name of the Azure container (if use_azure=True).
+    #     :return: Tuple (file_content, file_url, file_type, uploaded_file)
+    #     """
 
-        # 1) If 'read=True' and 'path' is provided, we just read the file content from disk
-        #    and do not upload anywhere.
-        print('In processing file', flush=True)
-        if read and path:
-            return self.read_file_content(path)
+    #     # 1) If 'read=True' and 'path' is provided, we just read the file content from disk
+    #     #    and do not upload anywhere.
+    #     print('In processing file', flush=True)
+    #     if read and path:
+    #         return self.read_file_content(path)
 
-        # 2) If there's no file provided, we can't do anything
-        print('No file', flush=True)
-        if not file:
-            print('Returning, no file', flush=True)
-            return '', None, None, None
+    #     # 2) If there's no file provided, we can't do anything
+    #     print('No file', flush=True)
+    #     if not file:
+    #         print('Returning, no file', flush=True)
+    #         return '', None, None, None
 
-        print('Not returning, continuing to process files.', flush=True)
-        # Generate secure filename
-        filename = secure_filename(file.filename)
-        unique_filename = f"{uuid.uuid4()}_{filename}"
+    #     print('Not returning, continuing to process files.', flush=True)
+    #     # Generate secure filename
+    #     filename = secure_filename(file.filename)
+    #     unique_filename = f"{uuid.uuid4()}_{filename}"
 
-        # --------------------------
-        # A) Upload to Azure Storage
-        # --------------------------
-        if use_azure and blob_service_client and container_name:
-            # Read file content into memory
-            file_bytes = file.read()
+    #     # --------------------------
+    #     # A) Upload to Azure Storage
+    #     # --------------------------
+    #     if use_azure and blob_service_client and container_name:
+    #         # Read file content into memory
+    #         file_bytes = file.read()
 
-            # Attempt uploading to Azure
-            blob_client = blob_service_client.get_blob_client(
-                container=container_name,
-                blob=unique_filename
-            )
-            try:
-                blob_client.upload_blob(file_bytes, overwrite=True)
-                azure_blob_url = blob_client.url
-                file_url = azure_blob_url
-            except Exception as e:
-                print("Error uploading to Azure Blob Storage:", e)
-                return "Error uploading file.", None, None, None
-            try:
-                # Insert a record in the database with the Azure file info
-                uploaded_file = UploadedFile(
-                    session_id=session_id,
-                    filename=unique_filename,
-                    original_filename=filename,
-                    file_url=file_url,
-                    file_type=file.content_type
-                )
-                db.session.add(uploaded_file)
-                db.session.commit()
-            except Exception as e:
-                # Rollback the session to avoid leaving it in a broken state
-                db.session.rollback()
-                print(f"Error while saving uploaded file record to the database: {e}", flush=True)
-                traceback.print_exc()
-                # Optionally, re-raise the exception to propagate it
-                raise e
+    #         # Attempt uploading to Azure
+    #         blob_client = blob_service_client.get_blob_client(
+    #             container=container_name,
+    #             blob=unique_filename
+    #         )
+    #         try:
+    #             blob_client.upload_blob(file_bytes, overwrite=True)
+    #             azure_blob_url = blob_client.url
+    #             file_url = azure_blob_url
+    #         except Exception as e:
+    #             print("Error uploading to Azure Blob Storage:", e)
+    #             return "Error uploading file.", None, None, None
+    #         try:
+    #             # Insert a record in the database with the Azure file info
+    #             uploaded_file = UploadedFile(
+    #                 session_id=session_id,
+    #                 filename=unique_filename,
+    #                 original_filename=filename,
+    #                 file_url=file_url,
+    #                 file_type=file.content_type
+    #             )
+    #             db.session.add(uploaded_file)
+    #             db.session.commit()
+    #         except Exception as e:
+    #             # Rollback the session to avoid leaving it in a broken state
+    #             db.session.rollback()
+    #             print(f"Error while saving uploaded file record to the database: {e}", flush=True)
+    #             traceback.print_exc()
+    #             # Optionally, re-raise the exception to propagate it
+    #             raise e
                 
 
 
-            # Extract the text for indexing/LLM usage
-            file_content = self.extract_content_from_memory(
-                file_bytes=file_bytes,
-                content_type=file.content_type
-            )
-            file_type = file.content_type
+    #         # Extract the text for indexing/LLM usage
+    #         file_content = self.extract_content_from_memory(
+    #             file_bytes=file_bytes,
+    #             content_type=file.content_type
+    #         )
+    #         file_type = file.content_type
 
-        # -------------------------
-        # B) Store File Locally
-        # -------------------------
-        else:
-            # Construct local file path and save the file
-            file_path = os.path.join(upload_folder, unique_filename)
-            file.save(file_path)
-            print(flush=True)
+    #     # -------------------------
+    #     # B) Store File Locally
+    #     # -------------------------
+    #     else:
+    #         # Construct local file path and save the file
+    #         file_path = os.path.join(upload_folder, unique_filename)
+    #         file.save(file_path)
+    #         print(flush=True)
 
-            # Log file save details
-            try:
-                file_size = os.path.getsize(file_path)
-                print(f"Saved file at {file_path}, size: {file_size} bytes", flush=True)
-            except Exception as e:
-                print(f"Error accessing saved file: {e}", flush=True)
-                return "Error accessing saved file.", None, None, None
-
-
-            print(f'In process files util: {session_id}', flush=True)
-            print(f'In process files util. file_path: {file_path}', flush=True)
-
-            print(flush=True)
-
-            # Insert record in DB with local file path
-            try:
-                uploaded_file = UploadedFile(
-                    session_id=session_id,
-                    filename=unique_filename,
-                    original_filename=filename,
-                    file_url=f"/uploads/{unique_filename}",
-                    file_type=file.content_type
-                )
-                print(f'Adding to db: {uploaded_file}', flush=True)
-                db.session.add(uploaded_file)
-                db.session.commit()
-            except Exception as e:
-                # Rollback the session to avoid leaving it in a broken state
-                db.session.rollback()
-                print(f"Error while saving uploaded file record to the database: {e}", flush=True)
-                traceback.print_exc()
-                # Optionally, re-raise the exception to propagate it
-                raise e
-
-            print(f'Added to db: {uploaded_file}', flush=True)
-
-            # Extract text from local file
-            if file.content_type == 'application/pdf':
-                file_content = self.extract_text_from_pdf(file_path)
-            elif file.content_type in [
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                'application/msword'
-            ]:
-                file_content = self.extract_text_from_docx(file_path)
-            elif file.content_type in [
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                'application/vnd.ms-excel'
-            ]:
-                file_content = extract_text_from_excel(file_path)
-            else:
-                # Attempt reading as text
-                try:
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        file_content = f.read()
-                except Exception as e:
-                    print("Error reading file:", e)
-                    file_content = "Error processing file."
-
-            # Local URL for the stored file
-            file_url = f"/uploads/{unique_filename}"
-            file_type = file.content_type
-
-        return file_content, file_url, file_type, uploaded_file
+    #         # Log file save details
+    #         try:
+    #             file_size = os.path.getsize(file_path)
+    #             print(f"Saved file at {file_path}, size: {file_size} bytes", flush=True)
+    #         except Exception as e:
+    #             print(f"Error accessing saved file: {e}", flush=True)
+    #             return "Error accessing saved file.", None, None, None
 
 
-    def read_file_content(self, path):
-        """
-        Reads an existing file from a local path, returning its text content.
-        If you want to read from Azure for an existing file, you'll need to
-        download to a temp file or memory first (not implemented here).
-        """
-        file_extension = os.path.splitext(path)[1].lower()
-        if file_extension == '.pdf':
-            return self.extract_text_from_pdf(path)
-        elif file_extension in ['.docx', '.doc']:
-            return self.extract_text_from_docx(path)
-        elif file_extension in ['.xlsx', '.xls']:
-            return self.extract_text_from_excel(path)
-        else:
-            try:
-                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                    return f.read()
-            except Exception as e:
-                print("Error reading file:", e)
-                return "Error processing file."
+    #         print(f'In process files util: {session_id}', flush=True)
+    #         print(f'In process files util. file_path: {file_path}', flush=True)
+
+    #         print(flush=True)
+
+    #         # Insert record in DB with local file path
+    #         try:
+    #             uploaded_file = UploadedFile(
+    #                 session_id=session_id,
+    #                 filename=unique_filename,
+    #                 original_filename=filename,
+    #                 file_url=f"/uploads/{unique_filename}",
+    #                 file_type=file.content_type
+    #             )
+    #             print(f'Adding to db: {uploaded_file}', flush=True)
+    #             db.session.add(uploaded_file)
+    #             db.session.commit()
+    #         except Exception as e:
+    #             # Rollback the session to avoid leaving it in a broken state
+    #             db.session.rollback()
+    #             print(f"Error while saving uploaded file record to the database: {e}", flush=True)
+    #             traceback.print_exc()
+    #             # Optionally, re-raise the exception to propagate it
+    #             raise e
+
+    #         print(f'Added to db: {uploaded_file}', flush=True)
+
+    #         # Extract text from local file
+    #         if file.content_type == 'application/pdf':
+    #             file_content = self.extract_text_from_pdf(file_path)
+    #         elif file.content_type in [
+    #             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    #             'application/msword'
+    #         ]:
+    #             file_content = self.extract_text_from_docx(file_path)
+    #         elif file.content_type in [
+    #             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    #             'application/vnd.ms-excel'
+    #         ]:
+    #             file_content = extract_text_from_excel(file_path)
+    #         else:
+    #             # Attempt reading as text
+    #             try:
+    #                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+    #                     file_content = f.read()
+    #             except Exception as e:
+    #                 print("Error reading file:", e)
+    #                 file_content = "Error processing file."
+
+    #         # Local URL for the stored file
+    #         file_url = f"/uploads/{unique_filename}"
+    #         file_type = file.content_type
+
+    #     return file_content, file_url, file_type, uploaded_file
 
 
-    # -----------------------
-    # In-memory extractions
-    # -----------------------
-    def extract_content_from_memory(self, file_bytes, content_type):
-        """
-        Reads the file content from an in-memory bytes object.
-        """
-        if not file_bytes:
-            return ""
-
-        if content_type == 'application/pdf':
-            return self.extract_pdf_from_memory(file_bytes)
-        elif content_type in [
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/msword'
-        ]:
-            return self.extract_docx_from_memory(file_bytes)
-        elif content_type in [
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.ms-excel'
-        ]:
-            return self.extract_excel_from_memory(file_bytes)
-        else:
-            # Assume it's plain text
-            try:
-                return file_bytes.decode('utf-8', errors='ignore')
-            except Exception as e:
-                print("Error decoding in-memory text file:", e)
-                return "Error processing file."
+    # def read_file_content(self, path):
+    #     """
+    #     Reads an existing file from a local path, returning its text content.
+    #     If you want to read from Azure for an existing file, you'll need to
+    #     download to a temp file or memory first (not implemented here).
+    #     """
+    #     file_extension = os.path.splitext(path)[1].lower()
+    #     if file_extension == '.pdf':
+    #         return self.extract_text_from_pdf(path)
+    #     elif file_extension in ['.docx', '.doc']:
+    #         return self.extract_text_from_docx(path)
+    #     elif file_extension in ['.xlsx', '.xls']:
+    #         return self.extract_text_from_excel(path)
+    #     else:
+    #         try:
+    #             with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+    #                 return f.read()
+    #         except Exception as e:
+    #             print("Error reading file:", e)
+    #             return "Error processing file."
 
 
-    def extract_pdf_from_memory(self, file_bytes):
-        try:
-            reader = PdfReader(io.BytesIO(file_bytes))
-            file_content = ""
-            for page in reader.pages:
-                file_content += page.extract_text() or ""
-            return self.truncate_content(file_content)
-        except Exception as e:
-            print("Error reading PDF from memory:", e)
-            return "Error processing PDF file."
+    # # -----------------------
+    # # In-memory extractions
+    # # -----------------------
+    # def extract_content_from_memory(self, file_bytes, content_type):
+    #     """
+    #     Reads the file content from an in-memory bytes object.
+    #     """
+    #     if not file_bytes:
+    #         return ""
+
+    #     if content_type == 'application/pdf':
+    #         return self.extract_pdf_from_memory(file_bytes)
+    #     elif content_type in [
+    #         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    #         'application/msword'
+    #     ]:
+    #         return self.extract_docx_from_memory(file_bytes)
+    #     elif content_type in [
+    #         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    #         'application/vnd.ms-excel'
+    #     ]:
+    #         return self.extract_excel_from_memory(file_bytes)
+    #     else:
+    #         # Assume it's plain text
+    #         try:
+    #             return file_bytes.decode('utf-8', errors='ignore')
+    #         except Exception as e:
+    #             print("Error decoding in-memory text file:", e)
+    #             return "Error processing file."
 
 
-    def extract_docx_from_memory(self, file_bytes):
-        try:
-            doc = Document(io.BytesIO(file_bytes))
-            file_content = "\n".join([p.text for p in doc.paragraphs])
-            return self.truncate_content(file_content)
-        except Exception as e:
-            print("Error reading DOCX from memory:", e)
-            return "Error processing Word file."
+    # def extract_pdf_from_memory(self, file_bytes):
+    #     try:
+    #         reader = PdfReader(io.BytesIO(file_bytes))
+    #         file_content = ""
+    #         for page in reader.pages:
+    #             file_content += page.extract_text() or ""
+    #         return self.truncate_content(file_content)
+    #     except Exception as e:
+    #         print("Error reading PDF from memory:", e)
+    #         return "Error processing PDF file."
 
 
-    def extract_excel_from_memory(self, file_bytes):
-        try:
-            wb = load_workbook(filename=io.BytesIO(file_bytes))
-            sheet = wb.active
-            file_content = ""
-            for row in sheet.iter_rows(values_only=True):
-                file_content += ' '.join(str(cell) for cell in row if cell is not None) + "\n"
-            return self.truncate_content(file_content)
-        except Exception as e:
-            print("Error reading Excel from memory:", e)
-            return "Error processing Excel file."
+    # def extract_docx_from_memory(self, file_bytes):
+    #     try:
+    #         doc = Document(io.BytesIO(file_bytes))
+    #         file_content = "\n".join([p.text for p in doc.paragraphs])
+    #         return self.truncate_content(file_content)
+    #     except Exception as e:
+    #         print("Error reading DOCX from memory:", e)
+    #         return "Error processing Word file."
 
 
-    # -----------------------
-    # Local file extractions
-    # -----------------------
-    def extract_text_from_pdf(self, file_path):
-        try:
-            reader = PdfReader(file_path)
-            file_content = ""
-            for page in reader.pages:
-                file_content += page.extract_text() or ""
-            return self.truncate_content(file_content)
-        except Exception as e:
-            print("Error reading PDF:", e)
-            return "Error processing PDF file."
+    # def extract_excel_from_memory(self, file_bytes):
+    #     try:
+    #         wb = load_workbook(filename=io.BytesIO(file_bytes))
+    #         sheet = wb.active
+    #         file_content = ""
+    #         for row in sheet.iter_rows(values_only=True):
+    #             file_content += ' '.join(str(cell) for cell in row if cell is not None) + "\n"
+    #         return self.truncate_content(file_content)
+    #     except Exception as e:
+    #         print("Error reading Excel from memory:", e)
+    #         return "Error processing Excel file."
 
 
-    def extract_text_from_docx(self, file_path):
-        try:
-            doc = Document(file_path)
-            file_content = "\n".join([p.text for p in doc.paragraphs])
-            return self.truncate_content(file_content)
-        except Exception as e:
-            print("Error reading DOCX:", e)
-            return "Error processing Word file."
+    # # -----------------------
+    # # Local file extractions
+    # # -----------------------
+    # def extract_text_from_pdf(self, file_path):
+    #     try:
+    #         reader = PdfReader(file_path)
+    #         file_content = ""
+    #         for page in reader.pages:
+    #             file_content += page.extract_text() or ""
+    #         return self.truncate_content(file_content)
+    #     except Exception as e:
+    #         print("Error reading PDF:", e)
+    #         return "Error processing PDF file."
 
 
-    def extract_text_from_excel(self, file_path):
-        try:
-            wb = load_workbook(file_path)
-            sheet = wb.active
-            file_content = ""
-            for row in sheet.iter_rows(values_only=True):
-                # Convert each cell to string if not None, then join
-                file_content += ' '.join(str(cell) for cell in row if cell is not None) + "\n"
-            return self.truncate_content(file_content)
-        except Exception as e:
-            print("Error reading Excel file:", e)
-            return "Error processing Excel file."
+    # def extract_text_from_docx(self, file_path):
+    #     try:
+    #         doc = Document(file_path)
+    #         file_content = "\n".join([p.text for p in doc.paragraphs])
+    #         return self.truncate_content(file_content)
+    #     except Exception as e:
+    #         print("Error reading DOCX:", e)
+    #         return "Error processing Word file."
 
 
-    def truncate_content(self, content):
-        """
-        Utility to ensure we don't exceed the WORD_LIMIT.
-        """
-        words = content.split()
-        if len(words) > WORD_LIMIT:
-            return ' '.join(words[:WORD_LIMIT]) + "\n\n[Text truncated after 50,000 words.]"
-        return content
+    # def extract_text_from_excel(self, file_path):
+    #     try:
+    #         wb = load_workbook(file_path)
+    #         sheet = wb.active
+    #         file_content = ""
+    #         for row in sheet.iter_rows(values_only=True):
+    #             # Convert each cell to string if not None, then join
+    #             file_content += ' '.join(str(cell) for cell in row if cell is not None) + "\n"
+    #         return self.truncate_content(file_content)
+    #     except Exception as e:
+    #         print("Error reading Excel file:", e)
+    #         return "Error processing Excel file."
+
+
+    # def truncate_content(self, content):
+    #     """
+    #     Utility to ensure we don't exceed the WORD_LIMIT.
+    #     """
+    #     words = content.split()
+    #     if len(words) > WORD_LIMIT:
+    #         return ' '.join(words[:WORD_LIMIT]) + "\n\n[Text truncated after 50,000 words.]"
+    #     return content

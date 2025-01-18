@@ -32,7 +32,8 @@ def process_uploaded_file(
     path=None,
     use_azure=False,
     blob_service_client=None,
-    container_name=None
+    container_name=None,
+    conversation_id=None
 ):
     """
     Handles file saving and processing.
@@ -96,7 +97,8 @@ def process_uploaded_file(
                 filename=unique_filename,
                 original_filename=filename,
                 file_url=file_url,
-                file_type=file.content_type
+                file_type=file.content_type,
+                conversation_id=conversation_id
             )
             db.session.add(uploaded_file)
             db.session.commit()
@@ -147,7 +149,8 @@ def process_uploaded_file(
                 filename=unique_filename,
                 original_filename=filename,
                 file_url=f"/uploads/{unique_filename}",
-                file_type=file.content_type
+                file_type=file.content_type,
+                conversation_id=conversation_id
             )
             print(f'Adding to db: {uploaded_file}', flush=True)
             db.session.add(uploaded_file)

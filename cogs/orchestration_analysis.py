@@ -1,5 +1,5 @@
 # cogs/orchestration_analysis.py
-from flask import request
+# from flask import request
 from models import UploadedFile
 import json
 import re
@@ -38,6 +38,7 @@ class OrchestrationAnalysisCog:
                         '- "code_orchestration": (boolean)\n'
                         '- "code_structure_orchestration": (boolean)\n'
                         '- "rand_num": (list)\n\n'
+                        '- "crm_review": (boolean)\n\n'
                         'Respond with only the JSON object and no additional text.\n\n'
                         'Guidelines:\n'
                         '1. **image_generation** should be True only when an image is requested. Example: "Create an image of a USMC officer saluting", "make an image of an amphibious assault." \n'
@@ -46,11 +47,12 @@ class OrchestrationAnalysisCog:
                         '4. **file_orchestration** should be True when the user asks for information about any uploaded file. This includes:\n'
                         f'   - Specific file references by their plain text titles from this list: {file_list}.\n'
                         f'   - General inquiries about the uploaded files, such as "What files are uploaded?" or "Show me the uploaded files."\n'
-                        '5. **file_ids** should contain a list of file IDs for the requested files if **file_orchestration** is True. Detect file references in the format "FILE:<id>". If the request is general, return a list of all file IDs.\n'  # Updated guideline
+                        '5. **file_ids** should contain a list of file IDs for the requested files if **file_orchestration** is True. Detect file references in the format "FILE:<id>". If the request is general, return a list of all file IDs. If crm_review is True, provide only the 2 file ids being referenced (one a pdf or word document and one a CRM excel document)\n'  # Updated guideline
                         '6. **active_users** should be True if there is a question about the most active users.\n'
                         '7. **code_orchestration** should be True when the user is asking about code-related queries. Anytime "your code" is in the User Input, this should be True.\n'
                         '8. **code_structure_orchestration** should be True only when the user asks specifically to "visualize" the code base architecture or structure. Return False if visualize (or a related word) is not in the request.\n'
                         '9. **rand_num** should contain [lowest_num, highest_num] if the user requests a random number within a range.\n\n'
+                        '10. **crm_review** should be True the user asks for a CRM review. Example: "Conduct a CRM review of the provided document."\n\n'
                         'Respond in JSON format.\nIMPORTANT: Boolean values only: True or False. If there is no user content, set all fields to False.'
                     )
                 },
@@ -100,7 +102,8 @@ class OrchestrationAnalysisCog:
                     "active_users": False,
                     "code_orchestration": False,
                     "code_structure_orchestration": False,  # New key
-                    "rand_num": []
+                    "rand_num": [],
+                    "crm_review": False
                 }
             # Extract file_ids if file_orchestration is detected
             if orchestration.get("file_orchestration", False):
@@ -127,5 +130,6 @@ class OrchestrationAnalysisCog:
                 "active_users": False,
                 "code_orchestration": False,
                 "code_structure_orchestration": False,  # New key
-                "rand_num": []
+                "rand_num": [],
+                "crm_review": False
             }

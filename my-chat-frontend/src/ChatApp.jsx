@@ -33,6 +33,9 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
 import CssBaseline from '@mui/material/CssBaseline';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import TableChartIcon from '@mui/icons-material/TableChart';
 
 // ErrorBoundary to catch rendering errors
 class ErrorBoundary extends React.Component {
@@ -91,20 +94,19 @@ const theme = createTheme({
   },
 });
 
-// Use <CssBaseline /> in your app root component
-
-
 // Memoized ChatMessage
 const ChatMessage = memo(
   ({ msg, loadingText }) => {
     const isAssistant = msg.role === "assistant";
-    const isFile = msg.role === "user" && msg.file;
     const isImage =
-      msg.role === "assistant" && msg.content.startsWith("![Generated Image](");
+      msg.role === "assistant" &&
+      typeof msg.content === "string" &&
+      msg.content.startsWith("![Generated Image](");
 
     let contentToRender;
+
     if (msg.loading) {
-      // loading message
+      // Loading message
       contentToRender = (
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
           <CircularProgress size={20} color="secondary" />
@@ -114,7 +116,7 @@ const ChatMessage = memo(
         </Box>
       );
     } else if (isImage) {
-      // assistant image
+      // Assistant image
       const match = msg.content.match(/^!\[Generated Image\]\((.+)\)$/);
       const imageUrl = match ? match[1] : null;
       if (imageUrl) {
@@ -134,50 +136,138 @@ const ChatMessage = memo(
           </Typography>
         );
       }
-    } else if (isFile) {
-      // user uploaded file
-      const { fileUrl, fileName, fileType } = msg;
-      if (fileType?.startsWith("image/")) {
-        contentToRender = (
-          <Box sx={{ maxWidth: '70%', borderRadius: '8px', overflow: 'hidden' }}>
-            <img
-              src={fileUrl}
-              alt={fileName}
-              style={{ width: '100%', height: 'auto', display: 'block' }}
-            />
-          </Box>
-        );
-      } else if (fileType === "application/pdf") {
-        contentToRender = (
-          <Box sx={{ maxWidth: '70%' }}>
-            <a
-              href={fileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#FFD700', textDecoration: 'none' }}
-            >
-              {fileName} (PDF)
-            </a>
-          </Box>
-        );
-      } else {
-        contentToRender = (
-          <Typography variant="body1" color="secondary">
-            {fileName} ({fileType})
-          </Typography>
-        );
-      }
     } else if (isAssistant) {
-      // assistant text
+      // Assistant text
       contentToRender = (
         <Box sx={{ wordBreak: "break-word", overflowWrap: "break-word" }}>
           <ReactMarkdown>{msg.content || "**(No content available)**"}</ReactMarkdown>
         </Box>
       );
-    } else {
-      // user text
+    } else if (msg.role === "user") {
+      // User text with optional files
       contentToRender = (
-        <Typography variant="body1">{msg.content || "No response available."}</Typography>
+        <Box>
+          <Typography variant="body1" sx={{ mb: 1 }}>
+            {msg.content || "No message provided."}
+          </Typography>
+          {msg.file && msg.files && msg.files.length > 0 && (
+            <Box>
+              {msg.files.map((file, index) => {
+                if (file.fileType?.startsWith("image/")) {
+                  // Image file preview
+                  return (
+                    <Box
+                      key={index}
+                      sx={{
+                        maxWidth: '70%',
+                        borderRadius: '8px',
+                        overflow: 'hidden',
+                        mb: 1,
+                      }}
+                    >
+                      <img
+                        src={file.fileUrl}
+                        alt={file.fileName}
+                        style={{
+                          width: '100%',
+                          height: 'auto',
+                          display: 'block',
+                        }}
+                      />
+                    </Box>
+                  );
+                } else if (file.fileType === "application/pdf") {
+                  // PDF file with modern icon
+                  return (
+                    <Box
+                      key={index}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        mb: 1,
+                        backgroundColor: '#2c2c2c',
+                        borderRadius: 1,
+                        p: 1,
+                        color: '#FFD700',
+                      }}
+                    >
+                      <PictureAsPdfIcon sx={{ mr: 1 }} />
+                      <a
+                        href={file.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: '#FFD700', textDecoration: 'none' }}
+                      >
+                        {file.fileName} (PDF)
+                      </a>
+                    </Box>
+                  );
+                } else if (
+                  file.fileType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ) {
+                  // Excel file with modern icon
+                  return (
+                    <Box
+                      key={index}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        mb: 1,
+                        backgroundColor: '#2c2c2c',
+                        borderRadius: 1,
+                        p: 1,
+                        color: '#FFD700',
+                      }}
+                    >
+                      <TableChartIcon sx={{ mr: 1 }} />
+                      <a
+                        href={file.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: '#FFD700', textDecoration: 'none' }}
+                      >
+                        {file.fileName} (Excel)
+                      </a>
+                    </Box>
+                  );
+                } else {
+                  // Fallback for other file types with generic file icon
+                  return (
+                    <Box
+                      key={index}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        mb: 1,
+                        backgroundColor: '#2c2c2c',
+                        borderRadius: 1,
+                        p: 1,
+                        color: '#FFD700',
+                      }}
+                    >
+                      <InsertDriveFileIcon sx={{ mr: 1 }} />
+                      <a
+                        href={file.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: '#FFD700', textDecoration: 'none' }}
+                      >
+                        {file.fileName} ({file.fileType})
+                      </a>
+                    </Box>
+                  );
+                }
+              })}
+            </Box>
+          )}
+        </Box>
+      );
+    } else {
+      // Fallback: for any other message types
+      contentToRender = (
+        <Typography variant="body1">
+          {msg.content || "No response available."}
+        </Typography>
       );
     }
 
@@ -186,15 +276,16 @@ const ChatMessage = memo(
         sx={{
           backgroundColor:
             msg.role === "user"
-              ? 'primary.main'
+              ? "primary.main"
               : msg.loading
-              ? 'grey.500'
-              : 'grey.700',
-          color: 'white',
+              ? "grey.500"
+              : "grey.700",
+          color: "white",
           borderRadius: 2,
-          p: isFile || isImage ? 0 : 1,
-          maxWidth: '80%',
-          ml: msg.role === "user" ? 'auto' : 0,
+          // Use no padding for file or image messages to allow edge-to-edge display, otherwise default to 1
+          p: isImage || (msg.role === "user" && msg.file) ? 0 : 1,
+          maxWidth: "80%",
+          ml: msg.role === "user" ? "auto" : 0,
           mb: 1,
         }}
       >
@@ -207,6 +298,8 @@ const ChatMessage = memo(
     prevProps.msg.content === nextProps.msg.content &&
     prevProps.loadingText === nextProps.loadingText
 );
+
+// export default ChatMessage;
 
 function ChatApp() {
   // Utility to generate a random GUID
@@ -291,7 +384,9 @@ function ChatApp() {
   // Initialize WebSocket
   useEffect(() => {
     if (!socketRef.current) {
-      socketRef.current = io("/", {
+      const baseURL = window.location.protocol + "//" + window.location.host;
+
+      socketRef.current = io(baseURL, {
         transports: ["websocket"],
         withCredentials: true,
         query: { session_id: storedSessionId },
@@ -444,15 +539,12 @@ function ChatApp() {
     }
   };
   
-  
-
   const deleteArchivedConversation = (archiveId) => {
     const updated = savedConversations.filter((c) => c.id !== archiveId);
     setSavedConversations(updated);
     localStorage.setItem("savedConversations", JSON.stringify(updated));
   };
   
-
   // (C) "New Conversation" => get fresh session_id from server, reset UI
   const startNewConversation = async () => {
     // Archive whatever is currently on screen
@@ -514,8 +606,11 @@ function ChatApp() {
 
   // (D) File handling
   const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) setSelectedFile(file);
+    const files = e.target.files;
+    // Convert FileList to an array and store it
+    if (files && files.length > 0) {
+      setSelectedFile(Array.from(files));
+    }
   };
   const handleUploadClick = () => {
     if (fileInputRef.current) fileInputRef.current.click();
@@ -524,27 +619,32 @@ function ChatApp() {
   // (E) Sending a message
   const sendMessage = async () => {
     setError("");
-    if (!message.trim() && !selectedFile) {
-      setError("Please enter a message or upload a file.");
+    // Ensure that there's a message or at least one selected file.
+    if (!message.trim() && (!selectedFile || selectedFile.length === 0)) {
+      setError("Please enter a message or upload at least one file.");
       return;
     }
-
+  
     if (!socketRef.current || !socketRef.current.connected) {
       console.warn("Socket not connected, but proceeding...");
     }
-
+  
+    // Create a user message object (for now, we use only the textual part)
     const userMessage = {
       role: "user",
       content: message.trim(),
       id: Date.now(),
-      file: !!selectedFile,
-      fileName: selectedFile?.name || null,
-      fileType: selectedFile?.type || null,
-      fileUrl: null,
+      file: selectedFile && selectedFile.length > 0, // Indicates files are present
+      // FIX: Only map selectedFile if it exists; otherwise use an empty array.
+      files: selectedFile ? selectedFile.map((file) => ({
+        fileUrl: URL.createObjectURL(file),
+        fileName: file.name,
+        fileType: file.type,
+      })) : [],
     };
     const placeholderId = userMessage.id + 1;
-
-    // Insert user message and a placeholder for the assistant
+  
+    // Insert the user message and a placeholder for the assistant response
     setConversation((prev) => {
       const filtered = prev.filter((m) => m.id !== "welcome");
       return [
@@ -559,21 +659,24 @@ function ChatApp() {
       ];
     });
     setMessage("");
+    // Clear out the selected files after sending
     setSelectedFile(null);
     setLoading(true);
-
-    // Prepare fetch
+  
+    // Prepare fetch – if files are present, append all to FormData.
     let payload;
     let fetchOptions;
-    if (selectedFile) {
+    if (selectedFile && selectedFile.length > 0) {
       payload = new FormData();
       payload.append("message", userMessage.content);
       payload.append("model", model);
       payload.append("system_prompt", systemPrompt.trim());
       payload.append("temperature", temperature);
-      payload.append("file", selectedFile);
       payload.append("room", storedSessionId);
-
+      // Append each file individually
+      selectedFile.forEach((file) => {
+        payload.append("files", file); // "files" will now be an array of files on the server side
+      });
       fetchOptions = { method: "POST", body: payload, credentials: "include" };
     } else {
       payload = {
@@ -590,7 +693,7 @@ function ChatApp() {
         credentials: "include",
       };
     }
-
+  
     try {
       const res = await fetch("/chat", fetchOptions);
       if (!res.ok) {
@@ -598,8 +701,8 @@ function ChatApp() {
         throw new Error(errData.error || "Failed to fetch.");
       }
       const data = await res.json();
-      const { assistant_reply, intent = {}, fileUrl, fileName, fileType } = data;
-
+      const { assistant_reply, intent = {} } = data;
+  
       if (data.error) {
         setError(data.error);
         setConversation((prev) =>
@@ -610,29 +713,19 @@ function ChatApp() {
           )
         );
       } else {
-        // If file was uploaded, add its info to the user message
-        if (fileUrl && fileName && fileType) {
-          setConversation((prev) =>
-            prev.map((m) =>
-              m.id === userMessage.id
-                ? { ...m, fileUrl, fileName, fileType }
-                : m
-            )
-          );
-        }
-
-        // Adjust the loading text
         let tempLoadingText = "Assistant is thinking...";
         if (intent.internet_search) tempLoadingText = "Searching the internet...";
         else if (intent.image_generation) tempLoadingText = "Creating the image...";
         else if (intent.code_intent) tempLoadingText = "Processing your code request...";
-
+  
         setLoadingText(tempLoadingText);
         setConversation((prev) =>
-          prev.map((m) => (m.id === placeholderId ? { ...m, content: tempLoadingText } : m))
+          prev.map((m) =>
+            m.id === placeholderId ? { ...m, content: tempLoadingText } : m
+          )
         );
-
-        // Simulate a short delay, then set the final assistant reply
+  
+        // Simulate a short delay, then set the final assistant reply.
         setTimeout(() => {
           setConversation((prev) =>
             prev.map((m) =>
@@ -642,8 +735,8 @@ function ChatApp() {
             )
           );
         }, 1000);
-
-        // Optionally re-fetch server conversation
+  
+        // Optionally re-fetch conversation history.
         if (storedSessionId) fetchConversations(storedSessionId);
       }
     } catch (err) {
@@ -681,7 +774,6 @@ function ChatApp() {
           alignItems: 'center', // Optional: Center content horizontally
         }}
       >
-
         <Container
           maxWidth="lg"
           sx={{
@@ -738,10 +830,10 @@ function ChatApp() {
                     </IconButton>
                   }
                 >
-                   <ListItemButton
-                      onClick={() => loadArchivedConversation(c.id)}
-                      selected={c.session_id === storedSessionId}  // Highlight if current
-                    >
+                  <ListItemButton
+                    onClick={() => loadArchivedConversation(c.id)}
+                    selected={c.session_id === storedSessionId}  // Highlight if current
+                  >
                     <ListItemText
                       primary={`Conversation #${c.id}`}
                       secondary={new Date(c.timestamp).toLocaleString()}
@@ -782,56 +874,55 @@ function ChatApp() {
               width: "100%",
             }}
           >
-          {/* Header */}
-          <Box
-            sx={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              mb: 2,
-              background: "linear-gradient(to right,rgb(0, 0, 0),rgb(0, 0, 0))", // Modern gradient
-              p: 1,
-              borderRadius: 2, // Slightly rounded corners
-              boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.3)", // Subtle shadow for depth
-            }}
-          >
-            <IconButton
-              onClick={() => setDrawerOpen(true)}
+            {/* Header */}
+            <Box
               sx={{
-                color: "primary.main", 
-                "&:hover": {
-                  backgroundColor: "rgba(255, 255, 255, 0.2)", // Hover effect
-                },
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                mb: 2,
+                background: "linear-gradient(to right,rgb(0, 0, 0),rgb(0, 0, 0))", // Modern gradient
+                p: 1,
+                borderRadius: 2, // Slightly rounded corners
+                boxShadow: "0px 4px 10px rgba(0, 0, 0, 0.3)", // Subtle shadow for depth
               }}
             >
-              <MenuIcon />
-            </IconButton>
+              <IconButton
+                onClick={() => setDrawerOpen(true)}
+                sx={{
+                  color: "primary.main", 
+                  "&:hover": {
+                    backgroundColor: "rgba(255, 255, 255, 0.2)", // Hover effect
+                  },
+                }}
+              >
+                <MenuIcon />
+              </IconButton>
 
-            <Typography
-              variant={isMobile ? "h6" : "h5"}
-              sx={{
-                color: "primary.main",
-                fontWeight: "bold", // Bolder typography
-                textShadow: "1px 1px 4px rgba(0, 0, 0, 0.5)", // Add subtle text shadow
-              }}
-            >
-              USMC AI Agent Demo
-            </Typography>
+              <Typography
+                variant={isMobile ? "h6" : "h5"}
+                sx={{
+                  color: "primary.main",
+                  fontWeight: "bold", // Bolder typography
+                  textShadow: "1px 1px 4px rgba(0, 0, 0, 0.5)", // Add subtle text shadow
+                }}
+              >
+                USMC AI Agent Demo
+              </Typography>
 
-            <IconButton
-              onClick={() => setSettingsOpen(!settingsOpen)}
-              sx={{
-                color: "primary.main", 
-                "&:hover": {
-                  backgroundColor: "rgba(255, 255, 255, 0.2)", // Hover effect
-                },
-              }}
-              size="medium" // Slightly larger size for better visibility
-            >
-              {settingsOpen ? <CloseIcon /> : <SettingsIcon />}
-            </IconButton>
-          </Box>
-
+              <IconButton
+                onClick={() => setSettingsOpen(!settingsOpen)}
+                sx={{
+                  color: "primary.main", 
+                  "&:hover": {
+                    backgroundColor: "rgba(255, 255, 255, 0.2)", // Hover effect
+                  },
+                }}
+                size="medium" // Slightly larger size for better visibility
+              >
+                {settingsOpen ? <CloseIcon /> : <SettingsIcon />}
+              </IconButton>
+            </Box>
 
             {/* Settings Panel */}
             {settingsOpen && (
@@ -921,6 +1012,7 @@ function ChatApp() {
               <input
                 type="file"
                 accept=".doc,.docx,.xls,.xlsx,.txt,.py,.jsx,.js,.json,.md,.html,.css,.pdf, image/*"
+                multiple
                 style={{ display: "none" }}
                 ref={fileInputRef}
                 onChange={handleFileUpload}
@@ -972,9 +1064,9 @@ function ChatApp() {
             </Box>
 
             {/* Optional status, errors, file name */}
-            {selectedFile && (
+            {selectedFile && selectedFile.length > 0 && (
               <Typography variant="body2" sx={{ mt: 1, color: "#FFD700" }}>
-                Selected File: {selectedFile.name}
+                Selected Files: {selectedFile.map(file => file.name).join(', ')}
               </Typography>
             )}
 
